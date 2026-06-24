@@ -1,7 +1,9 @@
 import React, { useState, useMemo } from 'react';
-import { Download, FileCode, CheckCircle2, Copy, Eye } from 'lucide-react';
+import { Download, FileCode, CheckCircle2, Copy, Eye, Image as ImageIcon } from 'lucide-react';
 import { useJgabc } from './hooks/useJgabc';
 import { convertGabcToLilypond, ConvertOptions } from './lib/gabcToLilypond';
+import { ExsurgePreview } from './components/ExsurgePreview';
+import { LilyPondPreview } from './components/LilyPondPreview';
 
 const psalmModules = import.meta.glob('./lib/jgabc/psalms/*.txt', { query: '?raw', import: 'default' }) as Record<string, () => Promise<string>>;
 const psalmKeys = Object.keys(psalmModules)
@@ -27,6 +29,7 @@ export default function App() {
   const [polyphonyGabc, setPolyphonyGabc] = useState("[{j<}{f>}h {j<}{f>}gh {j<}{f>}hr {i<}{d>}g {h<}{a>}h 'g#{g<}{e>}i {h<}{a>}hr {h<}{a>}h.\n{j<}{a>}hr {i<}{e>}g {h<}{a>}h {HJ}{HF}jh '{JI}{CD}hg g#{g<}{e>}er {g.<}{e.>}e.]");
   
   const [includeGloriaPatri, setIncludeGloriaPatri] = useState(true);
+  const [previewMode, setPreviewMode] = useState<'source' | 'visual'>('source');
 
   const [options, setOptions] = useState<ConvertOptions>({
     compressReciting: true,
@@ -62,36 +65,55 @@ export default function App() {
     const verses = psalmText.split('\n').filter(line => line.trim().length > 0);
     if (verses.length === 0) return { gabc: '', lilypond: '' };
     
-    // Preview Verse 1 (Chant)
-    const verse1 = verses[0];
-    let gabcRawTone = "";
+    // Setup for tone mapping
+    let medGabc = "";
+    let termGabc = "";
+    let clef = 'c4';
+
     if ((window as any).g_tones) {
         const g_tones = (window as any).g_tones;
         let toneStr = psalmTone.trim();
         let toneKey = Object.keys(g_tones).find(k => toneStr.startsWith(k)) || "";
         const toneData = g_tones[toneKey];
         if (toneData) {
+            if (toneData.clef) clef = toneData.clef;
             let ending = toneStr.substring(toneKey.length).trim();
-            gabcRawTone = toneData.mediant + "\n";
+            medGabc = toneData.mediant || "";
             if (ending && toneData.terminations && toneData.terminations[ending]) {
-                gabcRawTone += toneData.terminations[ending];
+                termGabc = toneData.terminations[ending];
             } else if (toneData.termination) {
-                gabcRawTone += toneData.termination;
+                termGabc = toneData.termination;
             } else if (toneData.mediant) {
-                gabcRawTone += toneData.mediant;
+                termGabc = toneData.mediant;
             }
         }
     }
-    
-    let gabcPreview = "";
+
+    // Preview Verse 1 (Chant)
+    const verse1 = verses[0];
+    let gabcPreview = `(${clef}) `;
     try {
-        const result1 = window.applyPsalmTone({ 
-            text: verse1.trim(), 
-            gabc: gabcRawTone || psalmTone,
-            useBoldItalic: true,
-            firstPrefix: false
-        });
-        gabcPreview = typeof result1 === 'string' ? result1 : (result1?.gabc || String(result1));
+        const parts = verse1.split('*');
+        if (parts.length > 0) {
+            const medResult = window.applyPsalmTone({ 
+                text: parts[0].trim(), 
+                gabc: medGabc || psalmTone, 
+                useBoldItalic: true,
+                firstPrefix: false
+            });
+            gabcPreview += (typeof medResult === 'string' ? medResult : (medResult.gabc || String(medResult)));
+        }
+        if (parts.length > 1) {
+            gabcPreview += " *(:) ";
+            const termResult = window.applyPsalmTone({ 
+                text: parts[1].trim(), 
+                gabc: termGabc || psalmTone, 
+                useBoldItalic: true,
+                firstPrefix: false
+            });
+            gabcPreview += (typeof termResult === 'string' ? termResult : (termResult.gabc || String(termResult)));
+        }
+        gabcPreview += " (::)";
     } catch (e) {
         console.error("Verse 1 error:", e);
         gabcPreview = "(c4)"; 
@@ -101,13 +123,38 @@ export default function App() {
     const verse2 = verses.length > 1 ? verses[1] : verses[0];
     let polyPreview = "";
     try {
-        const result2 = window.applyPsalmTone({
-            text: verse2.trim(),
-            gabc: polyphonyGabc.trim(),
-            useBoldItalic: false,
-            firstPrefix: false
-        });
-        polyPreview = typeof result2 === 'string' ? result2 : (result2?.gabc || String(result2));
+        const polyParts = polyphonyGabc.trim().split('\n').filter(p => p.trim());
+        const textParts = verse2.split('*');
+
+        if (textParts.length > 0 && polyParts.length > 0) {
+            const medPoly = window.applyPsalmTone({
+                text: textParts[0].trim(),
+                gabc: polyParts[0].trim(),
+                useBoldItalic: false,
+                firstPrefix: false
+            });
+            polyPreview += typeof medPoly === 'string' ? medPoly : (medPoly.gabc || String(medPoly));
+        }
+
+        if (textParts.length > 1 && polyParts.length > 1) {
+            polyPreview += " *(:) ";
+            const termPoly = window.applyPsalmTone({
+                text: textParts[1].trim(),
+                gabc: (polyParts.length > 1 ? polyParts.slice(1).join('\n') : polyParts[0]).trim(),
+                useBoldItalic: false,
+                firstPrefix: false
+            });
+            polyPreview += typeof termPoly === 'string' ? termPoly : (termPoly.gabc || String(termPoly));
+        } else if (textParts.length > 1 && polyParts.length === 1) {
+            polyPreview += " *(:) ";
+            const termPoly = window.applyPsalmTone({
+                text: textParts[1].trim(),
+                gabc: polyParts[0].trim(),
+                useBoldItalic: false,
+                firstPrefix: false
+            });
+            polyPreview += typeof termPoly === 'string' ? termPoly : (termPoly.gabc || String(termPoly));
+        }
     } catch (e) {
         console.error("Verse 2 error:", e);
         polyPreview = "(c4)"; 
@@ -458,31 +505,52 @@ export default function App() {
 
           <div className="lg:col-span-8 flex flex-col gap-6">
 
-            <div className="flex flex-col h-64 border border-[#2a2a2a] rounded-xl bg-[#0e0e0e] overflow-hidden">
+            <div className="flex flex-col h-72 border border-[#2a2a2a] rounded-xl bg-[#0e0e0e] overflow-hidden">
               <div className="bg-[#161616] border-b border-[#222] px-4 py-2 flex items-center justify-between text-gray-400">
-                 <span className="text-[10px] uppercase tracking-widest flex items-center gap-2">
-                   <Eye className="w-3 h-3 text-[#c5a059]" /> Note Source Preview
-                 </span>
-                 <span className="text-[10px] uppercase text-[#c5a059]">Verse 1 (Chant) & Verse 2 (Polyphony)</span>
+                 <div className="flex bg-[#0a0a0a] rounded border border-[#2a2a2a] p-0.5">
+                   <button 
+                     onClick={() => setPreviewMode('source')}
+                     className={`px-3 py-1 text-[10px] uppercase tracking-widest rounded transition-colors ${previewMode === 'source' ? 'bg-[#222] text-[#c5a059]' : 'text-gray-500 hover:text-gray-300'}`}
+                   >
+                     Source Code
+                   </button>
+                   <button 
+                     onClick={() => setPreviewMode('visual')}
+                     className={`px-3 py-1 text-[10px] uppercase tracking-widest rounded transition-colors ${previewMode === 'visual' ? 'bg-[#222] text-[#c5a059]' : 'text-gray-500 hover:text-gray-300'}`}
+                   >
+                     Visual Rendering
+                   </button>
+                 </div>
+                 <span className="text-[10px] uppercase text-[#c5a059] hidden sm:block">Verse 1 (Chant) & Verse 2 (Polyphony)</span>
               </div>
-              <div className="flex-1 grid grid-cols-2 divide-x divide-[#2a2a2a]">
-                <div className="flex flex-col">
-                  <div className="bg-[#111111] px-3 py-1 text-[9px] uppercase tracking-widest text-gray-500 border-b border-[#222]">Chant GABC</div>
-                  <textarea 
-                    readOnly 
-                    className="w-full h-full p-4 bg-[#0a0a0a] text-[#8b8b8b] font-mono text-[10px] leading-relaxed resize-none focus:outline-none selection:bg-[#c5a059] selection:text-black"
-                    value={preview.gabc}
-                    placeholder="Chant GABC preview..."
-                  />
+              <div className="flex-1 grid grid-cols-2 divide-x divide-[#2a2a2a] overflow-hidden">
+                <div className="flex flex-col overflow-hidden">
+                  <div className="bg-[#111111] px-3 py-1 text-[9px] uppercase tracking-widest text-gray-500 border-b border-[#222] shrink-0">Chant (GABC)</div>
+                  {previewMode === 'source' ? (
+                    <textarea 
+                      readOnly 
+                      className="w-full h-full p-4 bg-[#0a0a0a] text-[#8b8b8b] font-mono text-[10px] leading-relaxed resize-none focus:outline-none selection:bg-[#c5a059] selection:text-black"
+                      value={preview.gabc}
+                      placeholder="Chant GABC preview..."
+                    />
+                  ) : (
+                    <div className="flex-1 bg-[#fdfaf6] overflow-auto p-4 flex items-center justify-center">
+                       {preview.gabc ? <ExsurgePreview gabc={`(c4) ${preview.gabc.split('(::)')[0] + '(::)'}`} /> : <span className="text-gray-400 text-xs">Waiting for jgabc...</span>}
+                    </div>
+                  )}
                 </div>
-                <div className="flex flex-col">
-                  <div className="bg-[#111111] px-3 py-1 text-[9px] uppercase tracking-widest text-[#c5a059]/70 border-b border-[#222]">LilyPond Falsobordone</div>
-                  <textarea 
-                    readOnly 
-                    className="w-full h-full p-4 bg-[#0a0a0a] text-[#8b8b8b] font-mono text-[10px] leading-relaxed resize-none focus:outline-none selection:bg-[#c5a059] selection:text-black"
-                    value={preview.lilypond}
-                    placeholder="LilyPond preview..."
-                  />
+                <div className="flex flex-col overflow-hidden">
+                  <div className="bg-[#111111] px-3 py-1 text-[9px] uppercase tracking-widest text-[#c5a059]/70 border-b border-[#222] shrink-0">Falsobordone (LilyPond)</div>
+                  {previewMode === 'source' ? (
+                    <textarea 
+                      readOnly 
+                      className="w-full h-full p-4 bg-[#0a0a0a] text-[#8b8b8b] font-mono text-[10px] leading-relaxed resize-none focus:outline-none selection:bg-[#c5a059] selection:text-black"
+                      value={preview.lilypond}
+                      placeholder="LilyPond preview..."
+                    />
+                  ) : (
+                    <LilyPondPreview code={preview.lilypond} />
+                  )}
                 </div>
               </div>
             </div>

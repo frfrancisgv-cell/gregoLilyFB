@@ -5,6 +5,7 @@ export interface ConvertOptions {
     showBarlines?: boolean;
     hideStems?: boolean;
     transposeVal?: string;
+    melodyVoice?: 'tenor' | 'alto';
 }
 
 const diatonicPitches = [
@@ -43,7 +44,8 @@ export function convertGabcToLilypond(text: string, options: ConvertOptions = {}
         forceBreak = true,
         showBarlines = true,
         hideStems = false,
-        transposeVal = 'c c'
+        transposeVal = 'c c',
+        melodyVoice = 'tenor'
     } = options;
 
     let headerText = "", bodyText = text;
@@ -59,7 +61,7 @@ export function convertGabcToLilypond(text: string, options: ConvertOptions = {}
     let type = currentClef.charAt(0);
     let line = parseInt(currentClef.charAt(1));
     let anchorPos = (line * 2) + 1; 
-    let anchorPitchIndex = (type === 'c') ? 28 : 25;
+    let anchorPitchIndex = (type === 'c') ? 28 : 25; 
 
     let lilyTitle = "Converted SATB", lilySubtitle = "", lilyPiece = "";
     if (headerText) {
@@ -82,28 +84,6 @@ export function convertGabcToLilypond(text: string, options: ConvertOptions = {}
     let newWordForced = true;
     let activeAccidentals: Record<string, string> = {}; 
 
-    let parsePitchesFromBlock = (str: string) => {
-        let s = str.replace(/[<>\.#xy]/gi, '');
-        let res = [];
-        for (let char of s) {
-            let cLow = char.toLowerCase();
-            let posNum = charToNumericPos(cLow);
-            if (posNum === null) continue;
-            
-            let pitchIdx = anchorPitchIndex + (posNum - anchorPos);
-            
-            let explicitRegex = new RegExp(char + "([#xy])", "i");
-            let expMatch = str.match(explicitRegex);
-            
-            let accToApply = null; let isExplicit = false;
-            if (expMatch) { isExplicit = true; accToApply = expMatch[1].toLowerCase(); }
-            else if (activeAccidentals[cLow]) { accToApply = activeAccidentals[cLow]; }
-            
-            res.push({ idx: pitchIdx, acc: accToApply, explicit: isExplicit });
-        }
-        return res;
-    };
-
     while ((match = pattern.exec(bodyText)) !== null) {
         let rawWord = match[1] || "";
         let cleanWordWithSpaces = rawWord.replace(/<[^>]+>/g, '').replace(/\\greheightstar/g, '').replace(/[†\*]/g, '');
@@ -119,7 +99,7 @@ export function convertGabcToLilypond(text: string, options: ConvertOptions = {}
 
         if (!cleanWordTrimmed && notation.includes('r')) continue; 
 
-        if ([':', '::', ';', ','].includes(notation) || notation.includes('z')) {
+        if ([':', '::', ';', ',', '+'].includes(notation) || notation.includes('z')) {
             if (cleanWordTrimmed) {
                 for (let i = events.length - 1; i >= 0; i--) {
                     if (events[i].type === 'note') { events[i].text += cleanWordWithSpaces; break; }
@@ -133,48 +113,88 @@ export function convertGabcToLilypond(text: string, options: ConvertOptions = {}
 
         if (/^[cf]b?[1-4]$/i.test(notation)) continue;
 
+        let lowNot = notation.toLowerCase();
+        let explicitG = lowNot.includes('g#');
+        let explicitI = lowNot.includes('ix');
+        let explicitF = lowNot.includes('f#');
+        let explicitE = lowNot.includes('ex');
+
+        if (explicitG) activeAccidentals.g = '#'; else if (lowNot.includes('g0')) delete activeAccidentals.g;
+        if (explicitI) activeAccidentals.i = '#'; else if (lowNot.includes('i0')) delete activeAccidentals.i;
+        if (explicitF) activeAccidentals.f = '#'; else if (lowNot.includes('f0')) delete activeAccidentals.f;
+        if (explicitE) activeAccidentals.e = '#'; else if (lowNot.includes('e0')) delete activeAccidentals.e;
+
+        let bracketMatches = [...notation.matchAll(/\{([^}]+)\}/g)];
         let mStr = notation.replace(/([a-zA-Z0-9][#xy]?)(?=\{)/gi, ''); 
         mStr = mStr.replace(/\{([^}]+)\}/g, '').trim(); 
-        let bracketMatches = [...notation.matchAll(/\{([^}]+)\}/g)];
+        
+        let sStr = "", aStr = "", tStr = "", bStr = "";
+        
+        if (bracketMatches.length === 0) { 
+            sStr = aStr = tStr = bStr = mStr; 
+        } else if (bracketMatches.length === 1) { 
+            sStr = bracketMatches[0][1]; 
+            aStr = tStr = bStr = mStr; 
+        } else if (bracketMatches.length === 2) { 
+            sStr = bracketMatches[0][1]; 
+            bStr = bracketMatches[1][1]; 
+            aStr = mStr; 
+            tStr = mStr; 
+        } else if (bracketMatches.length >= 3) {
+            if (melodyVoice === 'alto') { 
+                sStr = bracketMatches[0][1]; 
+                tStr = bracketMatches[1][1]; 
+                bStr = bracketMatches[2][1]; 
+                aStr = mStr; 
+            } else { 
+                sStr = bracketMatches[0][1]; 
+                aStr = bracketMatches[1][1]; 
+                bStr = bracketMatches[2][1]; 
+                tStr = mStr; 
+            }
+        }
 
-        let blocks: any[] = [];
-        if (mStr) { let arr = parsePitchesFromBlock(mStr); if(arr.length) blocks.push(arr); }
-        for (let b of bracketMatches) { let arr = parsePitchesFromBlock(b[1]); if(arr.length) blocks.push(arr); }
+        let applyClefPitch = (str: string, voiceType: string) => {
+            let s = str.replace(/[<>\.#xy!]/gi, '');
+            let res = [];
+            for (let char of s) {
+                let cLow = char.toLowerCase();
+                let posNum = charToNumericPos(cLow);
+                if (posNum === null) continue;
+                
+                let pitchIdx = anchorPitchIndex + (posNum - anchorPos);
 
-        if (blocks.length > 0) {
-            blocks.sort((a, b) => b[0].idx - a[0].idx);
-
-            let sRaw=[], aRaw=[], tRaw=[], bRaw=[];
-            if (blocks.length === 1) { sRaw = aRaw = tRaw = bRaw = blocks[0]; }
-            else if (blocks.length === 2) { sRaw=blocks[0]; aRaw=blocks[0]; tRaw=blocks[1]; bRaw=blocks[1]; }
-            else if (blocks.length === 3) { sRaw=blocks[0]; aRaw=blocks[1]; tRaw=blocks[1]; bRaw=blocks[2]; }
-            else if (blocks.length >= 4) { sRaw=blocks[0]; aRaw=blocks[1]; tRaw=blocks[2]; bRaw=blocks[3]; }
-
-            let formatPitchArray = (rawArr: any[], octaveDrop: number) => {
-                let out = [];
-                for(let r of rawArr) {
-                    let finalIdx = r.idx - octaveDrop;
-                    if (finalIdx < 0) finalIdx = 0;
-                    if (finalIdx >= diatonicPitches.length) finalIdx = diatonicPitches.length - 1;
-                    let p = diatonicPitches[finalIdx];
-                    if (r.acc === '#') { p = applyAccidentalToLilypond(p, 'is'); if (r.explicit) p += '!'; }
-                    else if (r.acc === 'x') { p = applyAccidentalToLilypond(p, 'es'); if (r.explicit) p += '!'; }
-                    else if (r.acc === 'y') { if (r.explicit) p += '!'; }
-                    out.push(p);
+                if (voiceType === 'T' || voiceType === 'B') {
+                    pitchIdx -= 7;
                 }
-                return out;
-            };
 
-            let sArr = formatPitchArray(sRaw, 0);
-            let aArr = formatPitchArray(aRaw, 0);
-            let tArr = formatPitchArray(tRaw, 7);
-            let bArr = formatPitchArray(bRaw, 7);
+                if (pitchIdx < 0) pitchIdx = 0;
+                if (pitchIdx >= diatonicPitches.length) pitchIdx = diatonicPitches.length - 1;
+                let p = diatonicPitches[pitchIdx];
 
+                let explicitRegex = new RegExp(char + "([#xy])", "i");
+                let expMatch = notation.match(explicitRegex);
+                
+                let accToApply = null;
+                if (expMatch) { accToApply = expMatch[1].toLowerCase(); }
+                else if (activeAccidentals[cLow]) { accToApply = activeAccidentals[cLow]; }
+                
+                if (accToApply === '#') { p = applyAccidentalToLilypond(p, 'is'); }
+                else if (accToApply === 'x') { p = applyAccidentalToLilypond(p, 'es'); }
+                
+                res.push(p);
+            }
+            return res;
+        };
+
+        if (sStr || aStr || tStr || bStr) {
             let isSyl = false;
             if (rawWord !== "" && !/^\s/.test(rawWord) && !newWordForced) { if (firstNoteFound) isSyl = true; }
             firstNoteFound = true; newWordForced = false;
 
+            let sArr = applyClefPitch(sStr, 'S'), aArr = applyClefPitch(aStr, 'A'), tArr = applyClefPitch(tStr, 'T'), bArr = applyClefPitch(bStr, 'B');
             let maxLen = Math.max(sArr.length, aArr.length, tArr.length, bArr.length);
+            
             let applyDurAndSlur = (arr: any[]) => {
                 if (arr.length === 0) return "";
                 if (arr.length === 1) {
@@ -183,6 +203,7 @@ export function convertGabcToLilypond(text: string, options: ConvertOptions = {}
                 } else {
                     let out = []; let extraBeats = maxLen - arr.length;
                     let firstDur = extraBeats === 1 ? '2' : (extraBeats === 2 ? '2.' : '4');
+                    
                     for (let i = 0; i < arr.length; i++) {
                         let dur = (i === 0 && arr.length < maxLen) ? firstDur : '4';
                         let note = arr[i] + dur;
@@ -209,13 +230,19 @@ export function convertGabcToLilypond(text: string, options: ConvertOptions = {}
             groupedEvents.push(ev);
         } else if (ev.type === 'note') {
             let hasSlur = ev.s.includes('(') || ev.a.includes('(') || ev.t.includes('(') || ev.b.includes('(');
+            
             if (compressReciting && currentGroup.length > 0) {
                 let first = currentGroup[0];
                 let isIdentical = (ev.s === first.s && ev.a === first.a && ev.t === first.t && ev.b === first.b);
                 let firstHasSlur = first.s.includes('(') || first.a.includes('(') || first.t.includes('(') || first.b.includes('(');
                 
-                if (isIdentical && !hasSlur && !firstHasSlur) { currentGroup.push(ev); }
-                else { groupedEvents.push({ type: 'note_group', notes: currentGroup }); currentGroup = [ev]; }
+                if (isIdentical && !hasSlur && !firstHasSlur) { 
+                    currentGroup.push(ev); 
+                }
+                else { 
+                    groupedEvents.push({ type: 'note_group', notes: currentGroup }); 
+                    currentGroup = [ev]; 
+                }
             } else {
                 if (currentGroup.length > 0) { groupedEvents.push({ type: 'note_group', notes: currentGroup }); }
                 currentGroup = [ev];
@@ -230,8 +257,24 @@ export function convertGabcToLilypond(text: string, options: ConvertOptions = {}
     for (let grp of groupedEvents) {
         let isVerseEnd = false;
         if (grp.type === 'bar') {
-            let bar = grp.notation === ':' ? '\\bar "|"' : (grp.notation === '::' ? (forceBreak ? '\\bar "||" \\break' : '\\bar "||"') : (grp.notation === ';' ? '\\bar "\'"' : (grp.notation === ',' ? '\\bar ","' : '')));
-            if (grp.notation.includes('z')) { if (!bar) bar = '\\bar ""'; if (forceBreak && !bar.includes('\\break')) bar += ' \\break'; }
+            let bar = '';
+            if (grp.notation === ':') {
+                bar = '\\bar "|"';
+                if (!forceBreak) bar += ''; // lineBreaks logic from user's implementation
+                else bar += ' \\break';
+            } else if (grp.notation === '::') {
+                bar = '\\bar "||"';
+                if (forceBreak) bar += ' \\break';
+            } else if (grp.notation === ';') {
+                bar = '\\bar "!"';
+            } else if (grp.notation === '+' || grp.notation === ',') {
+                bar = '\\bar "\'"';
+            }
+            
+            if (grp.notation.includes('z')) { 
+                if (!bar) bar = '\\bar ""'; 
+                if (!bar.includes('\\break')) bar += ' \\break'; 
+            }
             
             if (bar.trim()) { curVerse.s.push(bar.trim()); curVerse.a.push(bar.trim()); curVerse.t.push(bar.trim()); curVerse.b.push(bar.trim()); }
             if (grp.notation.includes('::')) isVerseEnd = true;
@@ -279,10 +322,14 @@ export function convertGabcToLilypond(text: string, options: ConvertOptions = {}
     if (!showBarlines) layoutConfig += `\n    \\context {\n      \\Score\n      \\override BarLine.transparent = ##t\n      \\override SpanBar.transparent = ##t\n    }`;
     else layoutConfig += `\n    \\context {\n      \\Score\n      \\override SpanBar.transparent = ##t\n    }`;
 
-    let headerCode = "";
+    let headerCode = `\\header {\n  title = "${lilyTitle}"`;
+    if (lilySubtitle) headerCode += `\n  subtitle = "${lilySubtitle}"`;
+    if (lilyPiece) headerCode += `\n  piece = "${lilyPiece}"`;
+    headerCode += `\n  tagline = ##f\n}`;
+
     let tPrefix = transposeVal !== "c c" ? `\\transpose ${transposeVal} ` : "";
 
-    let finalOutput = `global = {\n  \\key c \\major\n  \\cadenzaOn\n}\n`;
+    let finalOutput = `\\version "2.24.0"\n\n${headerCode}\n\nglobal = {\n  \\key c \\major\n  \\cadenzaOn\n  \\accidentalStyle forget\n}\n`;
 
     if (compressStrophic && verses.length > 0) {
         let uniqueMusic: any[] = [];
@@ -297,7 +344,7 @@ export function convertGabcToLilypond(text: string, options: ConvertOptions = {}
             let lyric = v.l.join(' ').trim();
 
             if (!sMusic && !lyric) return;
-            if (lyric) allLyrics.push("% Verse\n  " + lyric);
+            if (lyric) { allLyrics.push("% Verse\n  " + lyric); }
 
             if (sMusic) {
                 let signature = sMusic + "|" + aMusic + "|" + tMusic + "|" + bMusic;

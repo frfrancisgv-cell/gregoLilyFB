@@ -1204,7 +1204,7 @@ var _getSyllables = function(text,bi) {
   return syl;
 }
 var _getEnSyllables = function(text){return Syl.syllabify(text);};
-var _getLaSyllables = function(text){return Syl.syllabify(text,'la');};
+var _getLaSyllables = function(text,bi){return _getSyllables(text,bi);};
 var getSyllables = _getLaSyllables;
 
 function getWords(syls) {

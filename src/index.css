@@ -1,1 +1,12 @@
 @import "tailwindcss";
+
+.exsurge-container svg {
+  max-width: 100%;
+  height: auto;
+  fill: #333; /* For shapes, staff lines */
+  color: #333; /* For text */
+}
+
+.exsurge-container svg text {
+  font-family: serif;
+}
