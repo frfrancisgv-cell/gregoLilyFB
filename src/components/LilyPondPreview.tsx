@@ -84,7 +84,7 @@ export function LilyPondPreview({ code }: { code: string }) {
   if (svgUrl) {
     return (
       <div className="flex-1 bg-[#fdfaf6] overflow-auto p-4 flex justify-center items-start">
-         <img src={svgUrl} alt="LilyPond Render" className="max-w-full h-auto max-h-none" />
+         <img src={svgUrl} alt="LilyPond Render" style={{ width: '75%' }} className="h-auto max-h-none" />
       </div>
     );
   }

@@ -28,6 +28,8 @@ export default function App() {
   const jgabcLoaded = useJgabc();
   const [psalmText, setPsalmText] = useState("Dixit Dóminus Dómino meo: * Sede a dextris meis:\nDonec ponam inimícos tuos, * scabéllum pedum tuórum.");
   const [psalmTone, setPsalmTone] = useState("8.G");
+  const [docTitle, setDocTitle] = useState("Psalm 109");
+  const [docSubtitle, setDocSubtitle] = useState("Psalm Tone: 8.G");
   const [polyphonyGabc, setPolyphonyGabc] = useState("[e f {m<}{K}{d>}hr {j<}{H}{f>}h '{l<}{HG}{e>}i {j<}{H}{a>}hr {j<}{H}{a>}h.\n{m<}{H}{d>}h {m<}{K}{d>}hr {l<}{I}{e>}g {l<}{J}{a>}h 'k#{l</k<}{I}{b>}f {l<}{G}{e>}er {l<}{G}{e>}e.]");
   
   const [polyTones, setPolyTones] = useState<{name: string, gabc: string}[]>([]);
@@ -62,6 +64,9 @@ export default function App() {
   
   const [lualatexOutput, setLualatexOutput] = useState("");
   const [copied, setCopied] = useState(false);
+  const [isCompiling, setIsCompiling] = useState(false);
+  const [pdfBase64, setPdfBase64] = useState("");
+  const [activeOutputTab, setActiveOutputTab] = useState<'pdf' | 'source'>('pdf');
 
   const availableTones = useMemo(() => {
     if (!jgabcLoaded || !(window as any).g_tones) return [];
@@ -205,7 +210,13 @@ export default function App() {
     return { gabc: gabcPreview, lilypond: lilypondPreview };
   }, [psalmText, psalmTone, polyphonyGabc, options, jgabcLoaded]);
 
-  const generateOutput = () => {
+  useEffect(() => {
+    if (!docSubtitle || docSubtitle.startsWith("Psalm Tone:")) {
+      setDocSubtitle(`Psalm Tone: ${psalmTone}`);
+    }
+  }, [psalmTone]);
+
+  const generateOutput = async () => {
     if (!window.applyPsalmTone) {
       alert("jgabc library is still loading or failed to load. Please try again in a few seconds.");
       return;
@@ -231,7 +242,8 @@ export default function App() {
 \\begin{document}
 
 \\begin{center}
-  \\textbf{\\Large Psalm Tone: ${psalmTone}}
+  \\textbf{\\Large ${docTitle || "Psalm"}}\\\\[1ex]
+  \\textit{\\large ${docSubtitle || `Psalm Tone: ${psalmTone}`}}
 \\end{center}
 
 `;
@@ -391,6 +403,33 @@ export default function App() {
 
       latexString += `\\end{document}`;
       setLualatexOutput(latexString);
+      
+      setIsCompiling(true);
+      setPdfBase64("");
+      try {
+        const res = await fetch("/api/lualatex-preview", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code: latexString })
+        });
+        
+        if (!res.ok) {
+          const data = await res.json();
+          throw new Error(data.error || "Failed to compile PDF.");
+        }
+        
+        const data = await res.json();
+        if (data.pdfBase64) {
+          setPdfBase64(data.pdfBase64);
+          setActiveOutputTab('pdf');
+        }
+      } catch (err: any) {
+        console.error(err);
+        alert("Compilation failed: " + err.message);
+      } finally {
+        setIsCompiling(false);
+      }
+      
       return latexString;
     } catch (err) {
       console.error(err);
@@ -436,6 +475,23 @@ export default function App() {
     URL.revokeObjectURL(url);
   };
 
+  const downloadPdf = () => {
+    if (!pdfBase64) return;
+    const byteCharacters = atob(pdfBase64);
+    const byteNumbers = new Array(byteCharacters.length);
+    for (let i = 0; i < byteCharacters.length; i++) {
+        byteNumbers[i] = byteCharacters.charCodeAt(i);
+    }
+    const byteArray = new Uint8Array(byteNumbers);
+    const blob = new Blob([byteArray], {type: 'application/pdf'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `psalm_${psalmTone}.pdf`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="min-h-screen bg-[#0c0c0c] text-[#d4d4d8] font-sans p-6 md:p-12">
       <div className="max-w-6xl mx-auto space-y-8">
@@ -459,6 +515,29 @@ export default function App() {
                 <FileCode className="w-4 h-4" /> Source Configuration
               </h2>
               
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-[10px] uppercase tracking-widest text-gray-500 mb-1 block">Document Title</label>
+                  <input 
+                    type="text" 
+                    className="w-full bg-[#1a1a1a] border border-[#333] text-[#d4d4d8] rounded p-2 focus:border-[#c5a059] outline-none text-sm font-serif transition-colors"
+                    value={docTitle}
+                    onChange={(e) => setDocTitle(e.target.value)}
+                    placeholder="e.g. Psalm 109"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] uppercase tracking-widest text-gray-500 mb-1 block">Subtitle / Tone</label>
+                  <input 
+                    type="text" 
+                    className="w-full bg-[#1a1a1a] border border-[#333] text-[#d4d4d8] rounded p-2 focus:border-[#c5a059] outline-none text-sm font-serif transition-colors"
+                    value={docSubtitle}
+                    onChange={(e) => setDocSubtitle(e.target.value)}
+                    placeholder={`e.g. Psalm Tone: ${psalmTone}`}
+                  />
+                </div>
+              </div>
+
               <div>
                 <label className="text-[10px] uppercase tracking-widest text-gray-500 mb-1 block">Psalm Tone</label>
                 <input 
@@ -576,6 +655,7 @@ export default function App() {
                             }
                               
                             setPsalmText(cleaned);
+                            setDocTitle(key.match(/^\d+$/) ? `Psalm ${parseInt(key, 10)}` : key);
                           } catch (err) {
                             console.error("Failed to load psalm", err);
                           }
@@ -652,10 +732,10 @@ export default function App() {
 
             <button 
               onClick={generateOutput}
-              disabled={!jgabcLoaded}
+              disabled={!jgabcLoaded || isCompiling}
               className="w-full bg-[#c5a059] hover:bg-[#d4b16a] text-black font-semibold py-3 rounded text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider flex items-center justify-center gap-2"
             >
-              {jgabcLoaded ? 'Generate LuaLaTeX' : 'Loading jgabc Engine...'}
+              {!jgabcLoaded ? 'Loading jgabc Engine...' : isCompiling ? 'Compiling PDF (this may take a minute)...' : 'Generate PDF'}
             </button>
 
           </div>
@@ -694,40 +774,95 @@ export default function App() {
             </div>
 
             <div className="flex flex-col min-h-[500px] flex-1 border border-[#2a2a2a] rounded-xl bg-[#0e0e0e] overflow-hidden">
-            <div className="bg-[#161616] border-b border-[#222] px-4 py-3 flex justify-between items-center text-gray-400">
-               <span className="text-[10px] uppercase tracking-widest flex items-center gap-2">
-                 <span className="w-2 h-2 rounded-full bg-[#c5a059] inline-block"></span>
-                 Output: LuaLaTeX
-               </span>
+            <div className="bg-[#161616] border-b border-[#222] px-4 py-3 flex justify-between items-center text-gray-400 flex-wrap gap-3">
+               <div className="flex items-center gap-4">
+                 <span className="text-[10px] uppercase tracking-widest flex items-center gap-2">
+                   <span className="w-2 h-2 rounded-full bg-[#c5a059] inline-block"></span>
+                   Output
+                 </span>
+                 
+                 <div className="flex gap-1 border border-[#333] rounded overflow-hidden">
+                    <button 
+                      onClick={() => setActiveOutputTab('pdf')}
+                      className={`px-3 py-1 text-[10px] uppercase tracking-widest transition-colors ${activeOutputTab === 'pdf' ? 'bg-[#333] text-white' : 'bg-[#1a1a1a] text-gray-400 hover:text-white'}`}
+                    >
+                      PDF Preview
+                    </button>
+                    <button 
+                      onClick={() => setActiveOutputTab('source')}
+                      className={`px-3 py-1 text-[10px] uppercase tracking-widest transition-colors ${activeOutputTab === 'source' ? 'bg-[#333] text-white' : 'bg-[#1a1a1a] text-gray-400 hover:text-white'}`}
+                    >
+                      LaTeX Source
+                    </button>
+                 </div>
+               </div>
+
                <div className="flex gap-2">
                  <button 
+                  onClick={downloadPdf}
+                  disabled={!pdfBase64}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-[#1a1a1a] hover:bg-[#222] border border-[#333] hover:border-[#c5a059] text-[#c5a059] rounded text-[10px] font-bold uppercase tracking-widest transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                 >
+                   <Download className="w-4 h-4" /> Download PDF
+                 </button>
+                 <button 
+                  onClick={downloadFile}
+                  disabled={!lualatexOutput}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-[#1a1a1a] hover:bg-[#222] border border-[#333] hover:border-[#c5a059] text-[#c5a059] rounded text-[10px] font-bold uppercase tracking-widest transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                 >
+                   <FileCode className="w-4 h-4" /> Download TeX Zip
+                 </button>
+                 <button 
                   onClick={copyToClipboard}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-[#1a1a1a] hover:bg-[#222] border border-[#333] hover:border-[#c5a059] text-[#c5a059] rounded text-[10px] font-bold uppercase tracking-widest transition-all"
+                  disabled={!lualatexOutput}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-[#1a1a1a] hover:bg-[#222] border border-[#333] hover:border-[#c5a059] text-[#c5a059] rounded text-[10px] font-bold uppercase tracking-widest transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                  >
                    {copied ? <CheckCircle2 className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
                    {copied ? 'Copied' : 'Copy'}
                  </button>
-                 <button 
-                  onClick={downloadFile}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-[#1a1a1a] hover:bg-[#222] border border-[#333] hover:border-[#c5a059] text-[#c5a059] rounded text-[10px] font-bold uppercase tracking-widest transition-all"
-                 >
-                   <Download className="w-4 h-4" /> Download TeX Zip
-                 </button>
                </div>
             </div>
-            {lualatexOutput && (
-              <div className="bg-[#c5a059]/10 border-b border-[#c5a059]/30 px-4 py-3 text-red-400 text-[11px] font-mono leading-relaxed">
-                <strong>CRITICAL:</strong> You must compile this file with the <code className="bg-red-500/20 px-1 py-0.5 rounded">--shell-escape</code> flag!
-                <br />
-                <span className="text-gray-400 mt-1 block">Example: <code>lualatex --shell-escape my_psalm.tex</code></span>
+            
+            {activeOutputTab === 'pdf' ? (
+              <div className="flex-1 bg-[#1a1a1a] flex flex-col justify-center items-center relative">
+                {isCompiling ? (
+                  <div className="text-gray-400 text-sm animate-pulse flex flex-col items-center gap-2">
+                    <span className="w-8 h-8 rounded-full border-t-2 border-[#c5a059] animate-spin mb-2"></span>
+                    Compiling Gregorio & LuaLaTeX...
+                  </div>
+                ) : pdfBase64 ? (
+                  <object 
+                    data={`data:application/pdf;base64,${pdfBase64}`} 
+                    type="application/pdf" 
+                    className="w-full h-full min-h-[500px]"
+                  >
+                    <p className="p-4 text-center text-gray-400">Your browser does not support inline PDFs. <br/><br/>
+                       <button onClick={downloadPdf} className="text-[#c5a059] underline">Click here to download the PDF</button>
+                    </p>
+                  </object>
+                ) : (
+                  <div className="text-gray-500 text-xs italic text-center p-4">
+                    Click "Generate PDF" to compile your chant and polyphony.
+                  </div>
+                )}
               </div>
+            ) : (
+              <>
+                {lualatexOutput && (
+                  <div className="bg-[#c5a059]/10 border-b border-[#c5a059]/30 px-4 py-3 text-red-400 text-[11px] font-mono leading-relaxed">
+                    <strong>CRITICAL:</strong> You must compile this file with the <code className="bg-red-500/20 px-1 py-0.5 rounded">--shell-escape</code> flag!
+                    <br />
+                    <span className="text-gray-400 mt-1 block">Example: <code>lualatex --shell-escape main.tex</code></span>
+                  </div>
+                )}
+                <textarea 
+                  readOnly 
+                  className="w-full h-full min-h-[500px] p-4 bg-black text-[#8b8b8b] font-mono text-[11px] leading-relaxed resize-none focus:outline-none flex-1 selection:bg-[#c5a059] selection:text-black"
+                  value={lualatexOutput}
+                  placeholder="% Your generated LuaLaTeX output, alternating between Gregorian chant verses and LilyPond falsobordone, will render here..."
+                />
+              </>
             )}
-            <textarea 
-              readOnly 
-              className="w-full h-full p-4 bg-black text-[#8b8b8b] font-mono text-[11px] leading-relaxed resize-none focus:outline-none flex-1 selection:bg-[#c5a059] selection:text-black"
-              value={lualatexOutput}
-              placeholder="% Your generated LuaLaTeX output, alternating between Gregorian chant verses and LilyPond falsobordone, will render here..."
-            />
           </div>
           </div>
 
