@@ -26,8 +26,11 @@ export function LilyPondPreview({ code }: { code: string }) {
       if (data.error) {
         setError(data.error);
         setSvgUrl(null);
+      } else if (data.pngBase64) {
+        setSvgUrl(`data:image/png;base64,${data.pngBase64}`);
+        setError(null);
       } else if (data.svg) {
-        // SVG from LilyPond can be embedded directly, or converted to a blob url
+        // Fallback for svg just in case
         const blob = new Blob([data.svg], { type: 'image/svg+xml' });
         const url = URL.createObjectURL(blob);
         setSvgUrl(url);

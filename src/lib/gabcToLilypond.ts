@@ -6,6 +6,7 @@ export interface ConvertOptions {
     hideStems?: boolean;
     transposeVal?: string;
     melodyVoice?: 'tenor' | 'alto';
+    noHeader?: boolean;
 }
 
 const diatonicPitches = [
@@ -45,7 +46,8 @@ export function convertGabcToLilypond(text: string, options: ConvertOptions = {}
         showBarlines = true,
         hideStems = false,
         transposeVal = 'c c',
-        melodyVoice = 'tenor'
+        melodyVoice = 'tenor',
+        noHeader = false
     } = options;
 
     let headerText = "", bodyText = text;
@@ -63,7 +65,7 @@ export function convertGabcToLilypond(text: string, options: ConvertOptions = {}
     let anchorPos = (line * 2) + 1; 
     let anchorPitchIndex = (type === 'c') ? 28 : 25; 
 
-    let lilyTitle = "Converted SATB", lilySubtitle = "", lilyPiece = "";
+    let lilyTitle = "", lilySubtitle = "", lilyPiece = "";
     if (headerText) {
         let lines = headerText.split('\n');
         let meta: Record<string, string> = {};
@@ -322,14 +324,18 @@ export function convertGabcToLilypond(text: string, options: ConvertOptions = {}
     if (!showBarlines) layoutConfig += `\n    \\context {\n      \\Score\n      \\override BarLine.transparent = ##t\n      \\override SpanBar.transparent = ##t\n    }`;
     else layoutConfig += `\n    \\context {\n      \\Score\n      \\override SpanBar.transparent = ##t\n    }`;
 
-    let headerCode = `\\header {\n  title = "${lilyTitle}"`;
-    if (lilySubtitle) headerCode += `\n  subtitle = "${lilySubtitle}"`;
-    if (lilyPiece) headerCode += `\n  piece = "${lilyPiece}"`;
-    headerCode += `\n  tagline = ##f\n}`;
+    let headerCode = "";
+    if (!noHeader) {
+        headerCode = `\\header {`;
+        if (lilyTitle) headerCode += `\n  title = "${lilyTitle}"`;
+        if (lilySubtitle) headerCode += `\n  subtitle = "${lilySubtitle}"`;
+        if (lilyPiece) headerCode += `\n  piece = "${lilyPiece}"`;
+        headerCode += `\n  tagline = ##f\n}\n\n`;
+    }
 
     let tPrefix = transposeVal !== "c c" ? `\\transpose ${transposeVal} ` : "";
 
-    let finalOutput = `\\version "2.24.0"\n\n${headerCode}\n\nglobal = {\n  \\key c \\major\n  \\cadenzaOn\n  \\accidentalStyle forget\n}\n`;
+    let finalOutput = `\\version "2.24.0"\n\n${headerCode}global = {\n  \\key c \\major\n  \\cadenzaOn\n  \\accidentalStyle forget\n}\n`;
 
     if (compressStrophic && verses.length > 0) {
         let uniqueMusic: any[] = [];

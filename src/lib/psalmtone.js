@@ -938,7 +938,7 @@ function applyPsalmTone(options) {
               if(flexEqualsTenor) {
                 r=s.prepunctuation + processGabcPrespace(s.syl) + s.punctuation + "(" + toneList.toneFlex + ".) (,)"+r;
               } else {
-                r=s.prepunctuation + processGabcPrespace(s.prespace) + biFlex[2] + s.sylnospace + biFlex[3] + s.punctuation + " †(" + toneList.toneFlex + ".)"+r;
+                r=s.prepunctuation + processGabcPrespace(s.prespace) + biFlex[2] + s.sylnospace + biFlex[3] + s.punctuation + "(" + toneList.toneFlex + ".) " + gabcFlex + "(+)"+r;
               }
               tenorUntilAccent = "(" + toneList.toneFlex + ")";
             } else {
