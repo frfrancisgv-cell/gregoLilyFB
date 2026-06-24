@@ -239,6 +239,10 @@ export default function App() {
 \\usepackage{lyluatex}
 \\usepackage[margin=1in]{geometry}
 
+% Color the mediant star red
+\\let\\oldgreheightstar\\greheightstar
+\\renewcommand{\\greheightstar}{\\textcolor{gregoriocolor}{\\oldgreheightstar}}
+
 \\begin{document}
 
 \\begin{center}

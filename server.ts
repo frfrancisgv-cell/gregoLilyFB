@@ -10,7 +10,7 @@ const execAsync = promisify(exec);
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = parseInt(process.env.PORT || "3003", 10);
 
   app.use(express.json());
 
@@ -172,7 +172,7 @@ ${code}
       const gabcFilesToCompile = [];
       while ((match = gabcRegex.exec(code)) !== null) {
         gabcIndex++;
-        const cleanGabc = match[1].replace(/<\/?(?:b|i|v)[^>]*>/g, '');
+        const cleanGabc = match[1];
         const gabcContent = `name: snippet-${gabcIndex};\n%%\n${cleanGabc}`;
         const gabcBaseName = `${uniqueId}-${gabcIndex}`;
         const gabcFileName = `${gabcBaseName}.gabc`;
