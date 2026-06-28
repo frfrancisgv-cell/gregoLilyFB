@@ -138,10 +138,11 @@ export function convertGabcToLilypond(text: string, options: ConvertOptions = {}
         }
     }
 
-    // Transpose soprano down an octave if any note is above the treble staff (above f'' = index 31)
-    // Transpose alto down an octave if any note is above c'' in the staff (index 28)
+    // Soprano drives octave transposition: if soprano is above the staff (> f'' = index 31),
+    // transpose it down. Alto always follows soprano to maintain voice proximity (≤ octave gap).
+    // If soprano is within range, neither voice transposes — even if alto alone would exceed its threshold.
     let transposeSopranoDownOctave = sopranoRecitingPitches.some(idx => idx > 31);
-    let transposeAltoDownOctave = altoRecitingPitches.some(idx => idx > 28);
+    let transposeAltoDownOctave = transposeSopranoDownOctave;
 
     let lilyTitle = "", lilySubtitle = "", lilyPiece = "";
     if (headerText) {
