@@ -81,8 +81,65 @@ export function convertGabcToLilypond(text: string, options: ConvertOptions = {}
 
     let type = currentClef.charAt(0);
     let line = parseInt(currentClef.charAt(1));
-    let anchorPos = (line * 2) - 1; 
+    let anchorPos = (line * 2) + 1; 
     let anchorPitchIndex = (type === 'c') ? 28 : 24; 
+
+    let sopranoRecitingPitches: number[] = [];
+    let altoRecitingPitches: number[] = [];
+
+    // Pre-scan to check for transpositions
+    let prePattern = /(?:([^()]+?))?\(([^)]+)\)/g;
+    let preMatch;
+    while ((preMatch = prePattern.exec(bodyText)) !== null) {
+        let notation = preMatch[2].trim();
+        let notationParts = notation.split(/\s+/);
+        for (let partNotation of notationParts) {
+            if ([':', '::', ';', ',', '+'].includes(partNotation) || partNotation.includes('z')) continue;
+            if (/^[cf]b?[1-4]$/i.test(partNotation)) continue;
+
+            let bracketMatches = [...partNotation.matchAll(/\{([^}]+)\}/g)];
+            let mStr = partNotation.replace(/([a-zA-Z0-9][#xy]?)(?=\{)/gi, ''); 
+            mStr = mStr.replace(/\{([^}]+)\}/g, '').trim(); 
+            
+            let sStr = "", aStr = "";
+            if (bracketMatches.length === 0) { 
+                sStr = aStr = mStr; 
+            } else if (bracketMatches.length === 1) { 
+                sStr = bracketMatches[0][1]; 
+                aStr = mStr; 
+            } else if (bracketMatches.length === 2) { 
+                sStr = bracketMatches[0][1]; 
+                aStr = mStr; 
+            } else if (bracketMatches.length >= 3) {
+                if (melodyVoice === 'alto') { 
+                    sStr = bracketMatches[0][1]; 
+                    aStr = mStr; 
+                } else { 
+                    sStr = bracketMatches[0][1]; 
+                    aStr = bracketMatches[1][1]; 
+                }
+            }
+
+            let checkReciting = (str: string, targetArray: number[]) => {
+                if (str.toLowerCase().includes('r')) {
+                    let s = str.replace(/[<>\.#xy!]/gi, '');
+                    for (let char of s) {
+                        let cLow = char.toLowerCase();
+                        let posNum = charToNumericPos(cLow);
+                        if (posNum === null) continue;
+                        let pitchIdx = anchorPitchIndex + (posNum - anchorPos);
+                        targetArray.push(pitchIdx);
+                    }
+                }
+            };
+
+            checkReciting(sStr, sopranoRecitingPitches);
+            checkReciting(aStr, altoRecitingPitches);
+        }
+    }
+
+    let transposeSopranoDownOctave = sopranoRecitingPitches.some(idx => idx > 31);
+    let transposeAltoDownOctave = altoRecitingPitches.some(idx => idx > 28);
 
     let lilyTitle = "", lilySubtitle = "", lilyPiece = "";
     if (headerText) {
@@ -191,6 +248,12 @@ export function convertGabcToLilypond(text: string, options: ConvertOptions = {}
                     if (posNum === null) continue;
                     
                     let pitchIdx = anchorPitchIndex + (posNum - anchorPos);
+
+                    if (voiceType === 'S' && transposeSopranoDownOctave) {
+                        pitchIdx -= 7;
+                    } else if (voiceType === 'A' && transposeAltoDownOctave) {
+                        pitchIdx -= 7;
+                    }
 
                     if (voiceType === 'T' || voiceType === 'B') {
                         pitchIdx -= 7;
