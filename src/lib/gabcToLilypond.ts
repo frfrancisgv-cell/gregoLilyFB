@@ -18,7 +18,7 @@ const diatonicPitches = [
     "c'''", "d'''", "e'''", "f'''", "g'''", "a'''", "b'''"
 ];
 
-function applyAccidentalToLilypond(pitchStr: string, accToken: string) {
+function applyAccidentalToLilypond(pitchStr: string, accToken: string, force: boolean = false) {
     let match = pitchStr.match(/^([a-g])([\,\']*)$/);
     if (!match) return pitchStr;
     let n = match[1];
@@ -29,7 +29,8 @@ function applyAccidentalToLilypond(pitchStr: string, accToken: string) {
         if (n === 'a' || n === 'e') mod = 's';
         else mod = 'es';
     }
-    return n + mod + oct;
+    const forceChar = force ? "!" : "";
+    return n + mod + oct + forceChar;
 }
 
 function charToNumericPos(char: string) {
@@ -267,11 +268,17 @@ export function convertGabcToLilypond(text: string, options: ConvertOptions = {}
                     let expMatch = partNotation.match(explicitRegex);
                     
                     let accToApply = null;
-                    if (expMatch) { accToApply = expMatch[1].toLowerCase(); }
-                    else if (activeAccidentals[cLow]) { accToApply = activeAccidentals[cLow]; }
+                    let isExplicit = false;
+                    if (expMatch) { 
+                        accToApply = expMatch[1].toLowerCase(); 
+                        isExplicit = true;
+                    }
+                    else if (activeAccidentals[cLow]) { 
+                        accToApply = activeAccidentals[cLow]; 
+                    }
                     
-                    if (accToApply === '#') { p = applyAccidentalToLilypond(p, 'is'); }
-                    else if (accToApply === 'x') { p = applyAccidentalToLilypond(p, 'es'); }
+                    if (accToApply === '#') { p = applyAccidentalToLilypond(p, 'is', isExplicit); }
+                    else if (accToApply === 'x') { p = applyAccidentalToLilypond(p, 'es', isExplicit); }
                     
                     res.push(p);
                 }
