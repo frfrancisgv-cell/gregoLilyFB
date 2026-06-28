@@ -34,15 +34,15 @@ function cleanPolyGabcForGregorio(gabc: string): string {
 export default function App() {
   const jgabcLoaded = useJgabc();
   const [psalmText, setPsalmText] = useState("Dixit Dóminus Dómino meo: * Sede a dextris meis:\nDonec ponam inimícos tuos, * scabéllum pedum tuórum.");
-  const [psalmTone, setPsalmTone] = useState("8.G");
+  const [psalmTone, setPsalmTone] = useState("1.D");
   const [docTitle, setDocTitle] = useState("Psalm 109");
-  const [docSubtitle, setDocSubtitle] = useState("Psalm Tone: 8.G");
-  const [polyphonyGabc, setPolyphonyGabc] = useState("[e f {m<}{K}{d>}hr {j<}{H}{f>}h '{l<}{HG}{e>}i {j<}{H}{a>}hr {j<}{H}{a>}h.\n{m<}{H}{d>}h {m<}{K}{d>}hr {l<}{I}{e>}g {l<}{J}{a>}h 'k#{l</k<}{I}{b>}f {l<}{G}{e>}er {l<}{G}{e>}e.]");
+  const [docSubtitle, setDocSubtitle] = useState("Psalm Tone: 1.D");
+  const [polyphonyGabc, setPolyphonyGabc] = useState("f gh {m<}{K}{d>}hr {m<}{J}{f>}h '{m</l<}{J.}{c.>}g. {m<}{J}{f>}hr {m.<}{J.}{f.>}h.\n{m<}{J}{f>}hr {l<}{J}{c>}g {k<}{H}{d>}f 'ix{k<}{I}{0>}g {k<}{I}{0>}gr {k<k</j</k<}{I/I/H/H}{0>/a>/a/>d>}gv/f/e/d.");
   const [chantGabc, setChantGabc] = useState("");
   const [polyPreviewFormat, setPolyPreviewFormat] = useState<'lilypond' | 'gregorio'>('lilypond');
   
   const [polyTones, setPolyTones] = useState<{name: string, gabc: string}[]>([]);
-  const [selectedPolyToneName, setSelectedPolyToneName] = useState("Mode 8");
+  const [selectedPolyToneName, setSelectedPolyToneName] = useState("Mode 1 4pt");
 
   const fetchPolyTones = async () => {
     try {
