@@ -205,8 +205,9 @@ export default function App() {
         polyPreview = ""; 
     }
 
-    const lilypondPreview = convertGabcToLilypond(`(${clef}) ${polyPreview}`, { ...options, forceBreak: false });
-    return { gabc: gabcPreview, polyGabc: `(${clef}) ${polyPreview}`, lilypond: lilypondPreview };
+    const hasClef = /^\s*\(([cf][1-4])\)/i.test(polyPreview);
+    const lilypondPreview = convertGabcToLilypond(hasClef ? polyPreview : `(${clef}) ${polyPreview}`, { ...options, forceBreak: false });
+    return { gabc: gabcPreview, polyGabc: hasClef ? polyPreview : `(${clef}) ${polyPreview}`, lilypond: lilypondPreview };
   }, [psalmText, psalmTone, chantGabc, polyphonyGabc, options, jgabcLoaded]);
 
 
@@ -428,7 +429,8 @@ export default function App() {
           } catch (err) {
               polyGabcRaw = `${verseText} (::)`;
           }
-          const lilypondStr = convertGabcToLilypond(`(${clef}) ${polyGabcRaw}`, { ...options, noHeader: true });
+          const hasClef = /^\s*\(([cf][1-4])\)/i.test(polyGabcRaw);
+          const lilypondStr = convertGabcToLilypond(hasClef ? polyGabcRaw : `(${clef}) ${polyGabcRaw}`, { ...options, noHeader: true });
           latexString += `% Verse ${index + 1} (Falsobordone)\n\\noindent\\begin{lilypond}[fragment=false]\n\\paper {\n  indent = 0\\mm\n  short-indent = 0\\mm\n}\n\n${lilypondStr}\n\\end{lilypond}\n\n`;
         }
       });
