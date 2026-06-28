@@ -99,7 +99,7 @@ export function convertGabcToLilypond(text: string, options: ConvertOptions = {}
             if (/^[cf]b?[1-4]$/i.test(partNotation)) continue;
 
             let bracketMatches = [...partNotation.matchAll(/\{([^}]+)\}/g)];
-            let mStr = partNotation.replace(/([a-zA-Z0-9][#xy]?)(?=\{)/gi, ''); 
+            let mStr = partNotation.replace(/(?:[a-zA-Z0-9][#xy]?)+(?=\{)/gi, ''); // strip ALL prefix tokens e.g. kxdx{
             mStr = mStr.replace(/\{([^}]+)\}/g, '').trim(); 
             
             let sStr = "", aStr = "";
@@ -213,7 +213,7 @@ export function convertGabcToLilypond(text: string, options: ConvertOptions = {}
             if (explicitE) activeAccidentals.e = 'x'; else if (lowNot.includes('e0')) delete activeAccidentals.e; // Flat
 
             let bracketMatches = [...partNotation.matchAll(/\{([^}]+)\}/g)];
-            let mStr = partNotation.replace(/([a-zA-Z0-9][#xy]?)(?=\{)/gi, ''); 
+            let mStr = partNotation.replace(/(?:[a-zA-Z0-9][#xy]?)+(?=\{)/gi, ''); // strip ALL prefix tokens e.g. kxdx{
             mStr = mStr.replace(/\{([^}]+)\}/g, '').trim(); 
             
             let sStr = "", aStr = "", tStr = "", bStr = "";
