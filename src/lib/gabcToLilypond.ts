@@ -121,24 +121,25 @@ export function convertGabcToLilypond(text: string, options: ConvertOptions = {}
                 }
             }
 
-            let checkReciting = (str: string, targetArray: number[]) => {
-                if (str.toLowerCase().includes('r')) {
-                    let s = str.replace(/[<>\.#xy!]/gi, '');
-                    for (let char of s) {
-                        let cLow = char.toLowerCase();
-                        let posNum = charToNumericPos(cLow);
-                        if (posNum === null) continue;
-                        let pitchIdx = anchorPitchIndex + (posNum - anchorPos);
-                        targetArray.push(pitchIdx);
-                    }
+            // Collect all pitches for soprano and alto to determine if octave transposition is needed
+            let collectPitches = (str: string, targetArray: number[]) => {
+                let s = str.replace(/[<>\.#xy!]/gi, '');
+                for (let char of s) {
+                    let cLow = char.toLowerCase();
+                    let posNum = charToNumericPos(cLow);
+                    if (posNum === null) continue;
+                    let pitchIdx = anchorPitchIndex + (posNum - anchorPos);
+                    targetArray.push(pitchIdx);
                 }
             };
 
-            checkReciting(sStr, sopranoRecitingPitches);
-            checkReciting(aStr, altoRecitingPitches);
+            collectPitches(sStr, sopranoRecitingPitches);
+            collectPitches(aStr, altoRecitingPitches);
         }
     }
 
+    // Transpose soprano down an octave if any note is above the treble staff (above f'' = index 31)
+    // Transpose alto down an octave if any note is above c'' in the staff (index 28)
     let transposeSopranoDownOctave = sopranoRecitingPitches.some(idx => idx > 31);
     let transposeAltoDownOctave = altoRecitingPitches.some(idx => idx > 28);
 
