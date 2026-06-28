@@ -4,6 +4,9 @@ Mode 1 4pt: f gh {m<}{K}{d>}hr {m<}{J}{f>}h '{m</l<}{J.}{c.>}g. {m<}{J}{f>}hr {m
 Mode 1 3pt (peregrinus): jk {h<}{f>}jr {h<}{f>}k {j<}{h>}j '{l<}{e>}i {l<}{e>}ir {j<}{b>}h.
 e#{g<}{e>}i {g<}{e>}ir {h<}{f>}f '{f<}{c>}h {f<}{c>}hr e#{f</e</f<}{c>/d>/0>}g/g/f.
 
+Mode 2: {j<}{f>}hr kxdx{k<}{d>}h {j<}{f>}h '{l<}{e>}i {j<}{h>}hr {j<}{h>}h.
+dx{m<}{d>}hr kxdx{k<}{d>}g {j<}{f>}g {i<}{b>}g '{g<}{c>}e h#{h<}{f>}fr h#{h<}{f>}f.
+
 Mode 4: {j<}{f>}h {j<}{f>}gh {j<}{f>}hr {i<}{d>}g {h<}{a>}h 'g#{g<}{e>}i {h<}{a>}hr {h<}{a>}h.
 {j<}{a>}hr {i<}{e>}g {h<}{a>}h {HJ}{HF}jh '{JI}{CD}hg g#{g<}{e>}er g#{g.<}{e.>}e.
 
@@ -11,5 +14,4 @@ Mode 5: (c3) d f {k<}{d>}hr {j<}{d>}h {i</h<}{a>}h '{h</g<}{e>/e>}ii {h<}{a>}hr 
 {h<}{d>}h {k<}{d>}hr {k<}{0>}i {i<}{b>}g 'ax{j<}{a>}h {k<}{d>}fr {k<}{d>}f.
 
 Mode 8: (c3) e f {m<}{K}{d>}hr {j<}{H}{f>}h '{l<}{HG}{e>}i {j<}{H}{a>}hr {j<}{H}{a>}h.
-{m<}{H}{d>}h {m<}{K}{d>}hr {l<}{I}{e>}g {l<}{J}{a>}h 'k#{l</k<}{I}{b>}f {l<}{G}{e>}er {l<}{G}{e>}e.
-
+{m<}{H}{d>}h {m<}{K}{d>}hr {l<}{I}{e>}g {l<}{J}{a>}h 'k#{l</k<}{I}{b>}f {l<}{G}{e>}er {l<}{G}{e>}e
