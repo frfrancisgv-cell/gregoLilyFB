@@ -202,11 +202,11 @@ export default function App() {
         }
     } catch (e) {
         console.error("Verse 2 error:", e);
-        polyPreview = "(c4)"; 
+        polyPreview = ""; 
     }
 
-    const lilypondPreview = convertGabcToLilypond(`(c4) ${polyPreview}`, { ...options, forceBreak: false });
-    return { gabc: gabcPreview, polyGabc: `(c4) ${polyPreview}`, lilypond: lilypondPreview };
+    const lilypondPreview = convertGabcToLilypond(`(${clef}) ${polyPreview}`, { ...options, forceBreak: false });
+    return { gabc: gabcPreview, polyGabc: `(${clef}) ${polyPreview}`, lilypond: lilypondPreview };
   }, [psalmText, psalmTone, chantGabc, polyphonyGabc, options, jgabcLoaded]);
 
 
@@ -294,18 +294,18 @@ export default function App() {
       verses.forEach((verseText, index) => {
         const isOdd = (index + 1) % 2 !== 0; // 1-based: 1, 3, 5 are odd
         
+        let clef = 'c4';
+        let cleanChantGabc = chantGabc;
+        const clefMatch = chantGabc.match(/^\s*\(([a-f][1-4]b?)\)/i);
+        if (clefMatch) {
+            clef = clefMatch[1].toLowerCase();
+            cleanChantGabc = chantGabc.replace(/^\s*\(([a-f][1-4]b?)\)/i, '');
+        }
+
         let gabcRaw = "";
         try {
             let medGabc = "";
             let termGabc = "";
-            let clef = 'c4';
-
-            let cleanChantGabc = chantGabc;
-            const clefMatch = chantGabc.match(/^\s*\(([a-f][1-4]b?)\)/i);
-            if (clefMatch) {
-                clef = clefMatch[1].toLowerCase();
-                cleanChantGabc = chantGabc.replace(/^\s*\(([a-f][1-4]b?)\)/i, '');
-            }
             const chantParts = cleanChantGabc.trim().split('\n').filter(p => p.trim());
             medGabc = chantParts[0] || "";
             termGabc = chantParts[1] || medGabc;
@@ -426,9 +426,9 @@ export default function App() {
               }
               
           } catch (err) {
-              polyGabcRaw = `(c4) ${verseText} (::)`;
+              polyGabcRaw = `${verseText} (::)`;
           }
-          const lilypondStr = convertGabcToLilypond(`(c4) ${polyGabcRaw}`, { ...options, noHeader: true });
+          const lilypondStr = convertGabcToLilypond(`(${clef}) ${polyGabcRaw}`, { ...options, noHeader: true });
           latexString += `% Verse ${index + 1} (Falsobordone)\n\\noindent\\begin{lilypond}[fragment=false]\n\\paper {\n  indent = 0\\mm\n  short-indent = 0\\mm\n}\n\n${lilypondStr}\n\\end{lilypond}\n\n`;
         }
       });
