@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+// @ts-ignore
 import * as exsurge from 'exsurge';
 
 export function ExsurgePreview({ gabc }: { gabc: string }) {
@@ -10,12 +11,13 @@ export function ExsurgePreview({ gabc }: { gabc: string }) {
     try {
       // Need a clean string without trailing garbage.
       const ctxt = new exsurge.ChantContext();
-      const score = exsurge.Gabc.loadChantScore(ctxt, gabc);
+      const mappings = exsurge.Gabc.createMappingsFromSource(ctxt, gabc);
+      const score = new exsurge.ChantScore(ctxt, mappings, true);
       
-      score.performLayout(ctxt, () => {
+      score.performLayoutAsync(ctxt, () => {
         score.layoutChantLines(ctxt, containerRef.current!.clientWidth || 800, () => {
           if (containerRef.current) {
-            let svgStr = score.createDrawable(ctxt);
+            let svgStr = score.createSvg(ctxt);
             svgStr = svgStr.replace(/width="-Infinity"/g, 'width="100%"').replace(/height="-Infinity"/g, 'height="100%"');
             containerRef.current.innerHTML = svgStr;
           }

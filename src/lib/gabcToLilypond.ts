@@ -38,6 +38,19 @@ function charToNumericPos(char: string) {
     return null;
 }
 
+function setLastNoteToHalf(voiceStr: string): string {
+    if (!voiceStr) return "";
+    let parts = voiceStr.trim().split(/\s+/);
+    if (parts.length === 0) return "";
+    let lastToken = parts[parts.length - 1];
+    // Match pitch (a-g, accidentals, octaves), optional duration, and any trailing chars (like slurs/parens)
+    const match = lastToken.match(/^([a-g](?:is|es|s)?[\',]*)((?:\d+\.?|\\breve)?)(.*)$/);
+    if (match) {
+        parts[parts.length - 1] = match[1] + "2" + match[3];
+    }
+    return parts.join(' ');
+}
+
 export function convertGabcToLilypond(text: string, options: ConvertOptions = {}) {
     const {
         compressReciting = true,
@@ -54,6 +67,12 @@ export function convertGabcToLilypond(text: string, options: ConvertOptions = {}
     if (text.includes('%%')) {
         let parts = text.split('%%');
         headerText = parts[0]; bodyText = parts[1];
+    }
+
+    // Ensure the GABC body ends with a finalis (::) if it doesn't already
+    let trimmedBody = bodyText.trim();
+    if (!trimmedBody.endsWith('(::)') && !trimmedBody.endsWith('::)')) {
+        bodyText = bodyText + ' (::)';
     }
 
     let currentClef = 'c4'; 
@@ -92,134 +111,142 @@ export function convertGabcToLilypond(text: string, options: ConvertOptions = {}
         let cleanWordTrimmed = cleanWordWithSpaces.trim();
         let notation = match[2].trim();
 
-        let accPattern = /([a-m0-9])([#xy])/gi;
-        let accMatch;
-        while ((accMatch = accPattern.exec(notation)) !== null) {
-            let pos = accMatch[1].toLowerCase();
-            activeAccidentals[pos] = accMatch[2].toLowerCase();
-        }
+        // Split notation by whitespace to handle space-separated note groups on a single syllable
+        let notationParts = notation.split(/\s+/);
+        for (let idx = 0; idx < notationParts.length; idx++) {
+            let partNotation = notationParts[idx];
+            let partWord = idx === 0 ? cleanWordWithSpaces : "";
+            let partWordTrimmed = idx === 0 ? cleanWordTrimmed : "";
 
-        if (!cleanWordTrimmed && notation.includes('r')) continue; 
-
-        if ([':', '::', ';', ',', '+'].includes(notation) || notation.includes('z')) {
-            if (cleanWordTrimmed) {
-                for (let i = events.length - 1; i >= 0; i--) {
-                    if (events[i].type === 'note') { events[i].text += cleanWordWithSpaces; break; }
-                }
+            let accPattern = /([a-m0-9])([#xy])/gi;
+            let accMatch;
+            while ((accMatch = accPattern.exec(partNotation)) !== null) {
+                let pos = accMatch[1].toLowerCase();
+                activeAccidentals[pos] = accMatch[2].toLowerCase();
             }
-            events.push({ type: 'bar', notation: notation, text: cleanWordTrimmed });
-            newWordForced = true; 
-            activeAccidentals = {}; 
-            continue;
-        }
 
-        if (/^[cf]b?[1-4]$/i.test(notation)) continue;
+            if (!partWordTrimmed && partNotation.includes('r')) continue; 
 
-        let lowNot = notation.toLowerCase();
-        let explicitG = lowNot.includes('g#');
-        let explicitI = lowNot.includes('ix');
-        let explicitF = lowNot.includes('f#');
-        let explicitE = lowNot.includes('ex');
-
-        if (explicitG) activeAccidentals.g = '#'; else if (lowNot.includes('g0')) delete activeAccidentals.g;
-        if (explicitI) activeAccidentals.i = '#'; else if (lowNot.includes('i0')) delete activeAccidentals.i;
-        if (explicitF) activeAccidentals.f = '#'; else if (lowNot.includes('f0')) delete activeAccidentals.f;
-        if (explicitE) activeAccidentals.e = '#'; else if (lowNot.includes('e0')) delete activeAccidentals.e;
-
-        let bracketMatches = [...notation.matchAll(/\{([^}]+)\}/g)];
-        let mStr = notation.replace(/([a-zA-Z0-9][#xy]?)(?=\{)/gi, ''); 
-        mStr = mStr.replace(/\{([^}]+)\}/g, '').trim(); 
-        
-        let sStr = "", aStr = "", tStr = "", bStr = "";
-        
-        if (bracketMatches.length === 0) { 
-            sStr = aStr = tStr = bStr = mStr; 
-        } else if (bracketMatches.length === 1) { 
-            sStr = bracketMatches[0][1]; 
-            aStr = tStr = bStr = mStr; 
-        } else if (bracketMatches.length === 2) { 
-            sStr = bracketMatches[0][1]; 
-            bStr = bracketMatches[1][1]; 
-            aStr = mStr; 
-            tStr = mStr; 
-        } else if (bracketMatches.length >= 3) {
-            if (melodyVoice === 'alto') { 
-                sStr = bracketMatches[0][1]; 
-                tStr = bracketMatches[1][1]; 
-                bStr = bracketMatches[2][1]; 
-                aStr = mStr; 
-            } else { 
-                sStr = bracketMatches[0][1]; 
-                aStr = bracketMatches[1][1]; 
-                bStr = bracketMatches[2][1]; 
-                tStr = mStr; 
-            }
-        }
-
-        let applyClefPitch = (str: string, voiceType: string) => {
-            let s = str.replace(/[<>\.#xy!]/gi, '');
-            let res = [];
-            for (let char of s) {
-                let cLow = char.toLowerCase();
-                let posNum = charToNumericPos(cLow);
-                if (posNum === null) continue;
-                
-                let pitchIdx = anchorPitchIndex + (posNum - anchorPos);
-
-                if (voiceType === 'T' || voiceType === 'B') {
-                    pitchIdx -= 7;
-                }
-
-                if (pitchIdx < 0) pitchIdx = 0;
-                if (pitchIdx >= diatonicPitches.length) pitchIdx = diatonicPitches.length - 1;
-                let p = diatonicPitches[pitchIdx];
-
-                let explicitRegex = new RegExp(char + "([#xy])", "i");
-                let expMatch = notation.match(explicitRegex);
-                
-                let accToApply = null;
-                if (expMatch) { accToApply = expMatch[1].toLowerCase(); }
-                else if (activeAccidentals[cLow]) { accToApply = activeAccidentals[cLow]; }
-                
-                if (accToApply === '#') { p = applyAccidentalToLilypond(p, 'is'); }
-                else if (accToApply === 'x') { p = applyAccidentalToLilypond(p, 'es'); }
-                
-                res.push(p);
-            }
-            return res;
-        };
-
-        if (sStr || aStr || tStr || bStr) {
-            let isSyl = false;
-            if (rawWord !== "" && !/^\s/.test(rawWord) && !newWordForced) { if (firstNoteFound) isSyl = true; }
-            firstNoteFound = true; newWordForced = false;
-
-            let sArr = applyClefPitch(sStr, 'S'), aArr = applyClefPitch(aStr, 'A'), tArr = applyClefPitch(tStr, 'T'), bArr = applyClefPitch(bStr, 'B');
-            let maxLen = Math.max(sArr.length, aArr.length, tArr.length, bArr.length);
-            
-            let applyDurAndSlur = (arr: any[]) => {
-                if (arr.length === 0) return "";
-                if (arr.length === 1) {
-                    let dur = maxLen === 2 ? '2' : (maxLen === 3 ? '2.' : (maxLen === 4 ? '1' : '4'));
-                    return arr[0] + dur;
-                } else {
-                    let out = []; let extraBeats = maxLen - arr.length;
-                    let firstDur = extraBeats === 1 ? '2' : (extraBeats === 2 ? '2.' : '4');
-                    
-                    for (let i = 0; i < arr.length; i++) {
-                        let dur = (i === 0 && arr.length < maxLen) ? firstDur : '4';
-                        let note = arr[i] + dur;
-                        if (arr.length > 1) { if (i === 0) note += '('; if (i === arr.length - 1) note += ')'; }
-                        out.push(note);
+            if ([':', '::', ';', ',', '+'].includes(partNotation) || partNotation.includes('z')) {
+                if (partWordTrimmed) {
+                    for (let i = events.length - 1; i >= 0; i--) {
+                        if (events[i].type === 'note') { events[i].text += partWord; break; }
                     }
-                    return out.join(' ');
                 }
+                events.push({ type: 'bar', notation: partNotation, text: partWordTrimmed });
+                newWordForced = true; 
+                activeAccidentals = {}; 
+                continue;
+            }
+
+            if (/^[cf]b?[1-4]$/i.test(partNotation)) continue;
+
+            let lowNot = partNotation.toLowerCase();
+            let explicitG = lowNot.includes('g#');
+            let explicitI = lowNot.includes('ix');
+            let explicitF = lowNot.includes('f#');
+            let explicitE = lowNot.includes('ex');
+
+            if (explicitG) activeAccidentals.g = '#'; else if (lowNot.includes('g0')) delete activeAccidentals.g;
+            if (explicitI) activeAccidentals.i = 'x'; else if (lowNot.includes('i0')) delete activeAccidentals.i; // Flat
+            if (explicitF) activeAccidentals.f = '#'; else if (lowNot.includes('f0')) delete activeAccidentals.f;
+            if (explicitE) activeAccidentals.e = 'x'; else if (lowNot.includes('e0')) delete activeAccidentals.e; // Flat
+
+            let bracketMatches = [...partNotation.matchAll(/\{([^}]+)\}/g)];
+            let mStr = partNotation.replace(/([a-zA-Z0-9][#xy]?)(?=\{)/gi, ''); 
+            mStr = mStr.replace(/\{([^}]+)\}/g, '').trim(); 
+            
+            let sStr = "", aStr = "", tStr = "", bStr = "";
+            
+            if (bracketMatches.length === 0) { 
+                sStr = aStr = tStr = bStr = mStr; 
+            } else if (bracketMatches.length === 1) { 
+                sStr = bracketMatches[0][1]; 
+                aStr = tStr = bStr = mStr; 
+            } else if (bracketMatches.length === 2) { 
+                sStr = bracketMatches[0][1]; 
+                bStr = bracketMatches[1][1]; 
+                aStr = mStr; 
+                tStr = mStr; 
+            } else if (bracketMatches.length >= 3) {
+                if (melodyVoice === 'alto') { 
+                    sStr = bracketMatches[0][1]; 
+                    tStr = bracketMatches[1][1]; 
+                    bStr = bracketMatches[2][1]; 
+                    aStr = mStr; 
+                } else { 
+                    sStr = bracketMatches[0][1]; 
+                    aStr = bracketMatches[1][1]; 
+                    bStr = bracketMatches[2][1]; 
+                    tStr = mStr; 
+                }
+            }
+
+            let applyClefPitch = (str: string, voiceType: string) => {
+                let s = str.replace(/[<>\.#xy!]/gi, '');
+                let res = [];
+                for (let char of s) {
+                    let cLow = char.toLowerCase();
+                    let posNum = charToNumericPos(cLow);
+                    if (posNum === null) continue;
+                    
+                    let pitchIdx = anchorPitchIndex + (posNum - anchorPos);
+
+                    if (voiceType === 'T' || voiceType === 'B') {
+                        pitchIdx -= 7;
+                    }
+
+                    if (pitchIdx < 0) pitchIdx = 0;
+                    if (pitchIdx >= diatonicPitches.length) pitchIdx = diatonicPitches.length - 1;
+                    let p = diatonicPitches[pitchIdx];
+
+                    let explicitRegex = new RegExp(char + "([#xy])", "i");
+                    let expMatch = partNotation.match(explicitRegex);
+                    
+                    let accToApply = null;
+                    if (expMatch) { accToApply = expMatch[1].toLowerCase(); }
+                    else if (activeAccidentals[cLow]) { accToApply = activeAccidentals[cLow]; }
+                    
+                    if (accToApply === '#') { p = applyAccidentalToLilypond(p, 'is'); }
+                    else if (accToApply === 'x') { p = applyAccidentalToLilypond(p, 'es'); }
+                    
+                    res.push(p);
+                }
+                return res;
             };
 
-            events.push({
-                type: 'note', text: cleanWordWithSpaces, textTrimmed: cleanWordTrimmed, isSyllable: isSyl,
-                s: applyDurAndSlur(sArr), a: applyDurAndSlur(aArr), t: applyDurAndSlur(tArr), b: applyDurAndSlur(bArr)
-            });
+            if (sStr || aStr || tStr || bStr) {
+                let isSyl = false;
+                if (partWord !== "" && !/^\s/.test(partWord) && !newWordForced) { if (firstNoteFound) isSyl = true; }
+                firstNoteFound = true; newWordForced = false;
+
+                let sArr = applyClefPitch(sStr, 'S'), aArr = applyClefPitch(aStr, 'A'), tArr = applyClefPitch(tStr, 'T'), bArr = applyClefPitch(bStr, 'B');
+                let maxLen = Math.max(sArr.length, aArr.length, tArr.length, bArr.length);
+                
+                let applyDurAndSlur = (arr: any[]) => {
+                    if (arr.length === 0) return "";
+                    if (arr.length === 1) {
+                        let dur = maxLen === 2 ? '2' : (maxLen === 3 ? '2.' : (maxLen === 4 ? '1' : '4'));
+                        return arr[0] + dur;
+                    } else {
+                        let out = []; let extraBeats = maxLen - arr.length;
+                        let firstDur = extraBeats === 1 ? '2' : (extraBeats === 2 ? '2.' : '4');
+                        
+                        for (let i = 0; i < arr.length; i++) {
+                            let dur = (i === 0 && arr.length < maxLen) ? firstDur : '4';
+                            let note = arr[i] + dur;
+                            if (arr.length > 1) { if (i === 0) note += '('; if (i === arr.length - 1) note += ')'; }
+                            out.push(note);
+                        }
+                        return out.join(' ');
+                    }
+                };
+
+                events.push({
+                    type: 'note', text: partWord, textTrimmed: partWordTrimmed, isSyllable: isSyl,
+                    s: applyDurAndSlur(sArr), a: applyDurAndSlur(aArr), t: applyDurAndSlur(tArr), b: applyDurAndSlur(bArr)
+                });
+            }
         }
     }
 
@@ -259,6 +286,18 @@ export function convertGabcToLilypond(text: string, options: ConvertOptions = {}
     for (let grp of groupedEvents) {
         let isVerseEnd = false;
         if (grp.type === 'bar') {
+            if (grp.notation === ':' || grp.notation === '::') {
+                if (curVerse.s.length > 0) {
+                    let lastIdx = curVerse.s.length - 1;
+                    if (lastIdx >= 0 && !curVerse.s[lastIdx].startsWith('\\bar')) {
+                        curVerse.s[lastIdx] = setLastNoteToHalf(curVerse.s[lastIdx]);
+                        curVerse.a[lastIdx] = setLastNoteToHalf(curVerse.a[lastIdx]);
+                        curVerse.t[lastIdx] = setLastNoteToHalf(curVerse.t[lastIdx]);
+                        curVerse.b[lastIdx] = setLastNoteToHalf(curVerse.b[lastIdx]);
+                    }
+                }
+            }
+
             let bar = '';
             if (grp.notation === ':') {
                 bar = '\\bar "|"';
@@ -335,7 +374,7 @@ export function convertGabcToLilypond(text: string, options: ConvertOptions = {}
 
     let tPrefix = transposeVal !== "c c" ? `\\transpose ${transposeVal} ` : "";
 
-    let finalOutput = `\\version "2.24.0"\n\n${headerCode}global = {\n  \\key c \\major\n  \\cadenzaOn\n  \\accidentalStyle forget\n}\n`;
+    let finalOutput = `\\version "2.24.0"\n\n${headerCode}global = {\n  \\key c \\major\n  \\cadenzaOn\n  \\accidentalStyle default\n}\n`;
 
     if (compressStrophic && verses.length > 0) {
         let uniqueMusic: any[] = [];

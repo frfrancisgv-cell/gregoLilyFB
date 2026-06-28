@@ -24,6 +24,13 @@ const psalmKeys = Object.keys(psalmModules)
   });
 (window as any).__psalmKeys = psalmKeys;
 
+function cleanPolyGabcForGregorio(gabc: string): string {
+  if (!gabc) return "";
+  // Replace bracketed SATB groups with just the Soprano voice (the first bracket)
+  // and strip the trailing bass note/accents that follow the brackets.
+  return gabc.replace(/\{([^}]+)\}(?:\{[^}]+\})*[a-zA-Z0-9\._<>\.#xy!r]*/g, "$1");
+}
+
 export default function App() {
   const jgabcLoaded = useJgabc();
   const [psalmText, setPsalmText] = useState("Dixit Dóminus Dómino meo: * Sede a dextris meis:\nDonec ponam inimícos tuos, * scabéllum pedum tuórum.");
@@ -31,6 +38,8 @@ export default function App() {
   const [docTitle, setDocTitle] = useState("Psalm 109");
   const [docSubtitle, setDocSubtitle] = useState("Psalm Tone: 8.G");
   const [polyphonyGabc, setPolyphonyGabc] = useState("[e f {m<}{K}{d>}hr {j<}{H}{f>}h '{l<}{HG}{e>}i {j<}{H}{a>}hr {j<}{H}{a>}h.\n{m<}{H}{d>}h {m<}{K}{d>}hr {l<}{I}{e>}g {l<}{J}{a>}h 'k#{l</k<}{I}{b>}f {l<}{G}{e>}er {l<}{G}{e>}e.]");
+  const [chantGabc, setChantGabc] = useState("");
+  const [polyPreviewFormat, setPolyPreviewFormat] = useState<'lilypond' | 'gregorio'>('lilypond');
   
   const [polyTones, setPolyTones] = useState<{name: string, gabc: string}[]>([]);
   const [selectedPolyToneName, setSelectedPolyToneName] = useState("Mode 8");
@@ -95,24 +104,15 @@ export default function App() {
     let termGabc = "";
     let clef = 'c4';
 
-    if ((window as any).g_tones) {
-        const g_tones = (window as any).g_tones;
-        let toneStr = psalmTone.trim();
-        let toneKey = Object.keys(g_tones).find(k => toneStr.startsWith(k)) || "";
-        const toneData = g_tones[toneKey];
-        if (toneData) {
-            if (toneData.clef) clef = toneData.clef;
-            let ending = toneStr.substring(toneKey.length).trim();
-            medGabc = toneData.mediant || "";
-            if (ending && toneData.terminations && toneData.terminations[ending]) {
-                termGabc = toneData.terminations[ending];
-            } else if (toneData.termination) {
-                termGabc = toneData.termination;
-            } else if (toneData.mediant) {
-                termGabc = toneData.mediant;
-            }
-        }
+    let cleanChantGabc = chantGabc;
+    const clefMatch = chantGabc.match(/^\s*\(([a-f][1-4]b?)\)/i);
+    if (clefMatch) {
+        clef = clefMatch[1].toLowerCase();
+        cleanChantGabc = chantGabc.replace(/^\s*\(([a-f][1-4]b?)\)/i, '');
     }
+    const chantParts = cleanChantGabc.trim().split('\n').filter(p => p.trim());
+    medGabc = chantParts[0] || "";
+    termGabc = chantParts[1] || medGabc;
 
     // Preview Verse 1 (Chant)
     const verse1 = verses[0];
@@ -206,15 +206,54 @@ export default function App() {
     }
 
     const lilypondPreview = convertGabcToLilypond(`(c4) ${polyPreview}`, { ...options, forceBreak: false });
-    
-    return { gabc: gabcPreview, lilypond: lilypondPreview };
-  }, [psalmText, psalmTone, polyphonyGabc, options, jgabcLoaded]);
+    return { gabc: gabcPreview, polyGabc: `(c4) ${polyPreview}`, lilypond: lilypondPreview };
+  }, [psalmText, psalmTone, chantGabc, polyphonyGabc, options, jgabcLoaded]);
+
+
+
+  useEffect(() => {
+    if (!jgabcLoaded) return;
+    const g_tones = (window as any).g_tones;
+    if (g_tones) {
+        let toneStr = psalmTone.trim();
+        let toneKey = Object.keys(g_tones).find(k => toneStr.startsWith(k)) || "";
+        const toneData = g_tones[toneKey];
+        if (toneData) {
+            let clef = toneData.clef || 'c4';
+            let ending = toneStr.substring(toneKey.length).trim();
+            let med = toneData.mediant || "";
+            let term = "";
+            if (ending && toneData.terminations && toneData.terminations[ending]) {
+                term = toneData.terminations[ending];
+            } else if (toneData.termination) {
+                term = toneData.termination;
+            } else if (toneData.mediant) {
+                term = toneData.mediant;
+            }
+            setChantGabc(`(${clef}) ${med}\n${term}`);
+        }
+    }
+  }, [psalmTone, jgabcLoaded]);
 
   useEffect(() => {
     if (!docSubtitle || docSubtitle.startsWith("Psalm Tone:")) {
       setDocSubtitle(`Psalm Tone: ${psalmTone}`);
     }
   }, [psalmTone]);
+
+  useEffect(() => {
+    if (!psalmTone || polyTones.length === 0) return;
+    const match = psalmTone.match(/^([1-8])/);
+    if (match) {
+      const modeNum = match[1];
+      const targetModeName = `Mode ${modeNum}`;
+      const found = polyTones.find(t => t.name.toLowerCase() === targetModeName.toLowerCase() || t.name.toLowerCase().startsWith(targetModeName.toLowerCase()));
+      if (found) {
+        setSelectedPolyToneName(found.name);
+        setPolyphonyGabc(found.gabc);
+      }
+    }
+  }, [psalmTone, polyTones]);
 
   const generateOutput = async () => {
     if (!window.applyPsalmTone) {
@@ -261,26 +300,15 @@ export default function App() {
             let termGabc = "";
             let clef = 'c4';
 
-            if ((window as any).g_tones) {
-                const g_tones = (window as any).g_tones;
-                let toneStr = psalmTone.trim();
-                const keys = Object.keys(g_tones);
-                let toneKey = keys.find(k => toneStr.startsWith(k)) || "";
-                
-                const toneData = g_tones[toneKey];
-                if (toneData) {
-                    if (toneData.clef) clef = toneData.clef;
-                    let ending = toneStr.substring(toneKey.length).trim();
-                    medGabc = toneData.mediant || "";
-                    if (ending && toneData.terminations && toneData.terminations[ending]) {
-                        termGabc = toneData.terminations[ending];
-                    } else if (toneData.termination) {
-                        termGabc = toneData.termination;
-                    } else if (toneData.mediant) {
-                        termGabc = toneData.mediant;
-                    }
-                }
+            let cleanChantGabc = chantGabc;
+            const clefMatch = chantGabc.match(/^\s*\(([a-f][1-4]b?)\)/i);
+            if (clefMatch) {
+                clef = clefMatch[1].toLowerCase();
+                cleanChantGabc = chantGabc.replace(/^\s*\(([a-f][1-4]b?)\)/i, '');
             }
+            const chantParts = cleanChantGabc.trim().split('\n').filter(p => p.trim());
+            medGabc = chantParts[0] || "";
+            termGabc = chantParts[1] || medGabc;
 
             gabcRaw = `(${clef}) `;
 
@@ -544,17 +572,27 @@ export default function App() {
 
               <div>
                 <label className="text-[10px] uppercase tracking-widest text-gray-500 mb-1 block">Psalm Tone</label>
-                <input 
-                  type="text" 
-                  list="tones-list"
-                  className="w-full bg-[#1a1a1a] border border-[#333] text-[#d4d4d8] rounded p-2 focus:border-[#c5a059] outline-none text-sm font-serif transition-colors"
+                <select 
+                  className="w-full bg-[#1a1a1a] border border-[#333] text-[#d4d4d8] rounded p-2 focus:border-[#c5a059] outline-none text-sm font-serif transition-colors cursor-pointer"
                   value={psalmTone}
                   onChange={(e) => setPsalmTone(e.target.value)}
-                  placeholder="e.g. 8.G, 1.D"
+                >
+                  {availableTones.map(t => (
+                    <option key={t} value={t} className="bg-[#1a1a1a]">{t}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-[10px] uppercase tracking-widest text-gray-500 block mb-1">
+                  Chant Tone GABC (Gregorian)
+                </label>
+                <textarea 
+                  className="w-full h-20 bg-[#1a1a1a] border border-[#333] text-[#a1a1aa] rounded p-3 focus:border-[#c5a059] outline-none font-mono text-xs leading-relaxed resize-y transition-colors"
+                  value={chantGabc}
+                  onChange={(e) => setChantGabc(e.target.value)}
+                  placeholder="Gregorian chant tone formula..."
                 />
-                <datalist id="tones-list">
-                  {availableTones.map(t => <option key={t} value={t} />)}
-                </datalist>
               </div>
 
               <div>
@@ -768,8 +806,34 @@ export default function App() {
 
                 {preview.lilypond ? (
                   <div className="flex-1 flex flex-col">
-                    <h4 className="text-[10px] uppercase tracking-wider text-gray-400 mb-2 font-semibold">Polyphony (LilyPond SATB)</h4>
-                    <LilyPondPreview code={preview.lilypond} />
+                    <div className="flex justify-between items-center mb-2 border-b border-gray-100 pb-2">
+                      <h4 className="text-[10px] uppercase tracking-wider text-gray-400 font-semibold">
+                        Polyphony ({polyPreviewFormat === 'lilypond' ? 'LilyPond SATB' : 'Gregorio Chant'})
+                      </h4>
+                      <div className="flex gap-1 border border-[#333] bg-[#1a1a1a] rounded overflow-hidden p-0.5">
+                        <button
+                          type="button"
+                          onClick={() => setPolyPreviewFormat('lilypond')}
+                          className={`px-2 py-0.5 text-[9px] uppercase tracking-widest transition-colors font-bold rounded ${polyPreviewFormat === 'lilypond' ? 'bg-[#c5a059] text-black' : 'text-gray-400 hover:text-white'}`}
+                        >
+                          LilyPond
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPolyPreviewFormat('gregorio')}
+                          className={`px-2 py-0.5 text-[9px] uppercase tracking-widest transition-colors font-bold rounded ${polyPreviewFormat === 'gregorio' ? 'bg-[#c5a059] text-black' : 'text-gray-400 hover:text-white'}`}
+                        >
+                          Gregorio
+                        </button>
+                      </div>
+                    </div>
+                    {polyPreviewFormat === 'lilypond' ? (
+                      <LilyPondPreview code={preview.lilypond} />
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <ExsurgePreview gabc={preview.polyGabc} />
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="text-gray-400 text-xs italic text-center p-4">No polyphony text available</div>
