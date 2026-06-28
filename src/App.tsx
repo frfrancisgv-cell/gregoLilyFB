@@ -147,12 +147,17 @@ export default function App() {
     // Preview Polyphony (using Verse 2 if available, otherwise Verse 1)
     const polyVerse = verses.length > 1 ? verses[1] : verses[0];
     let polyPreview = "";
+    // Extract clef from polyphony GABC itself; if absent, inherit from chant
+    const polyClefMatch = polyphonyGabc.match(/^\s*\(([cf][1-4]b?)\)/i);
+    const polyClef = polyClefMatch ? polyClefMatch[1].toLowerCase() : clef;
     try {
         const polyParts = polyphonyGabc.trim().split('\n').filter(p => p.trim());
         const textParts = polyVerse.split('*');
 
         if (textParts.length > 0 && polyParts.length > 0) {
             let polyInput: any = polyParts[0].trim();
+            // Strip leading clef from polyInput so jgabc doesn't choke on it
+            polyInput = polyInput.replace(/^\s*\([cf][1-4]b?\)\s*/i, '');
             if ((window as any).getGabcTones && (window as any).removeIntonation) {
                 try {
                     let toneList = (window as any).getGabcTones(polyInput);
@@ -206,8 +211,8 @@ export default function App() {
     }
 
     const hasClef = /^\s*\(([cf][1-4])\)/i.test(polyPreview);
-    const lilypondPreview = convertGabcToLilypond(hasClef ? polyPreview : `(${clef}) ${polyPreview}`, { ...options, forceBreak: false });
-    return { gabc: gabcPreview, polyGabc: hasClef ? polyPreview : `(${clef}) ${polyPreview}`, lilypond: lilypondPreview };
+    const lilypondPreview = convertGabcToLilypond(hasClef ? polyPreview : `(${polyClef}) ${polyPreview}`, { ...options, forceBreak: false });
+    return { gabc: gabcPreview, polyGabc: hasClef ? polyPreview : `(${polyClef}) ${polyPreview}`, lilypond: lilypondPreview };
   }, [psalmText, psalmTone, chantGabc, polyphonyGabc, options, jgabcLoaded]);
 
 
@@ -362,12 +367,17 @@ export default function App() {
         } else {
           // Falsobordone Polyphony verse (LilyPond)
           let polyGabcRaw = "";
+          // Extract clef from polyphony GABC; if absent, inherit from chant
+          const polyClefMatchGen = polyphonyGabc.match(/^\s*\(([cf][1-4]b?)\)/i);
+          const polyClef = polyClefMatchGen ? polyClefMatchGen[1].toLowerCase() : clef;
           try {
               const polyParts = polyphonyGabc.trim().split('\n').filter(p => p.trim());
               const textParts = verseText.split('*');
 
               if (textParts.length > 0 && polyParts.length > 0) {
                   let polyInput: any = polyParts[0].trim();
+                  // Strip leading clef from polyInput so jgabc doesn't choke on it
+                  polyInput = polyInput.replace(/^\s*\([cf][1-4]b?\)\s*/i, '');
                   if ((window as any).getGabcTones && (window as any).removeIntonation) {
                       try {
                           let toneList = (window as any).getGabcTones(polyInput);
@@ -430,7 +440,7 @@ export default function App() {
               polyGabcRaw = `${verseText} (::)`;
           }
           const hasClef = /^\s*\(([cf][1-4])\)/i.test(polyGabcRaw);
-          const lilypondStr = convertGabcToLilypond(hasClef ? polyGabcRaw : `(${clef}) ${polyGabcRaw}`, { ...options, noHeader: true });
+          const lilypondStr = convertGabcToLilypond(hasClef ? polyGabcRaw : `(${polyClef}) ${polyGabcRaw}`, { ...options, noHeader: true });
           latexString += `% Verse ${index + 1} (Falsobordone)\n\\noindent\\begin{lilypond}[fragment=false]\n\\paper {\n  indent = 0\\mm\n  short-indent = 0\\mm\n}\n\n${lilypondStr}\n\\end{lilypond}\n\n`;
         }
       });
