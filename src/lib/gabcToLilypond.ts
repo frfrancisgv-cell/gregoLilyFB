@@ -81,8 +81,8 @@ export function convertGabcToLilypond(text: string, options: ConvertOptions = {}
 
     let type = currentClef.charAt(0);
     let line = parseInt(currentClef.charAt(1));
-    let anchorPos = (line * 2) + 1; 
-    let anchorPitchIndex = (type === 'c') ? 28 : 25; 
+    let anchorPos = (line * 2) - 1; 
+    let anchorPitchIndex = (type === 'c') ? 28 : 24; 
 
     let lilyTitle = "", lilySubtitle = "", lilyPiece = "";
     if (headerText) {
