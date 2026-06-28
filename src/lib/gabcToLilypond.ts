@@ -44,8 +44,8 @@ function setLastNoteToHalf(voiceStr: string): string {
     let parts = voiceStr.trim().split(/\s+/);
     if (parts.length === 0) return "";
     let lastToken = parts[parts.length - 1];
-    // Match pitch (a-g, accidentals, octaves), optional duration, and any trailing chars (like slurs/parens)
-    const match = lastToken.match(/^([a-g](?:is|es|s)?[\',]*)((?:\d+\.?|\\breve)?)(.*)$/);
+    // Match pitch (a-g, accidentals, octaves, optional forced accidental), optional duration, and any trailing chars (like slurs/parens)
+    const match = lastToken.match(/^([a-g](?:is|es|s)?[\',]*\!?)((?:\d+\.?|\\breve)?)(.*)$/);
     if (match) {
         parts[parts.length - 1] = match[1] + "2" + match[3];
     }
