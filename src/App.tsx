@@ -122,6 +122,8 @@ export default function App() {
   const [antiphonError, setAntiphonError] = useState<string>('');
   const [antiphonCandidates, setAntiphonCandidates] = useState<any[]>([]);
   const [selectedCandidateId, setSelectedCandidateId] = useState<number | null>(null);
+  const [antiphonMode, setAntiphonMode] = useState<number | null>(null);
+  const [antiphonModeVar, setAntiphonModeVar] = useState<string | null>(null);
   const [antiphonSelectMode, setAntiphonSelectMode] = useState<'liturgical' | 'search'>('liturgical');
   const [searchIncipit, setSearchIncipit] = useState('');
   const [searchType, setSearchType] = useState('Communion');
@@ -371,6 +373,8 @@ export default function App() {
     }
     setAntiphonGabc(finalGabc);
     setAntiphonGregobaseId(data.id || null);
+    setAntiphonMode(data.mode ? parseInt(data.mode, 10) : null);
+    setAntiphonModeVar((data.modeVar && data.modeVar !== 'NULL' && data.modeVar !== '') ? data.modeVar : null);
 
     // Derive psalm tone from mode + variant (or fallback to first note)
     let tone = "1.D";
@@ -422,6 +426,8 @@ export default function App() {
   const loadProper = async (proper: ProperEntry) => {
     setSelectedProper(proper);
     setAntiphonGabc('');
+    setAntiphonMode(null);
+    setAntiphonModeVar(null);
     setAntiphonError('');
     setAntiphonLoading(true);
     setAntiphonCandidates([]);
@@ -432,6 +438,8 @@ export default function App() {
       if (!res.ok) {
         setAntiphonError(`Not found in GregoBase: ${proper.incipit}`);
         setAntiphonGabc('');
+        setAntiphonMode(null);
+        setAntiphonModeVar(null);
         setAntiphonGregobaseId(null);
       } else {
         const data = await res.json();
@@ -475,6 +483,8 @@ export default function App() {
     setAntiphonError('');
     setAntiphonCandidates([]);
     setSelectedCandidateId(null);
+    setAntiphonMode(null);
+    setAntiphonModeVar(null);
     setSelectedProper(null);
     try {
       const params = new URLSearchParams({ incipit: targetIncipit.trim(), type: targetType });
@@ -482,6 +492,8 @@ export default function App() {
       if (!res.ok) {
         setAntiphonError(`Not found in GregoBase: ${targetIncipit}`);
         setAntiphonGabc('');
+        setAntiphonMode(null);
+        setAntiphonModeVar(null);
         setAntiphonGregobaseId(null);
       } else {
         const data = await res.json();
@@ -864,6 +876,8 @@ export default function App() {
                     setSelectedCandidateId(null);
                     setSelectedProper(null);
                     setAntiphonGabc('');
+                    setAntiphonMode(null);
+                    setAntiphonModeVar(null);
                     setAntiphonError('');
                   }}
                 >
@@ -878,6 +892,8 @@ export default function App() {
                     setSelectedCandidateId(null);
                     setSelectedProper(null);
                     setAntiphonGabc('');
+                    setAntiphonMode(null);
+                    setAntiphonModeVar(null);
                     setAntiphonError('');
                   }}
                 >
@@ -897,6 +913,8 @@ export default function App() {
                         setSelectedLiturgy(e.target.value);
                         setSelectedProper(null);
                         setAntiphonGabc('');
+                        setAntiphonMode(null);
+                        setAntiphonModeVar(null);
                         setAntiphonError('');
                       }}
                     >
@@ -1054,7 +1072,7 @@ export default function App() {
               {selectedProper && (
                 <button
                   type="button"
-                  onClick={() => { setSelectedProper(null); setAntiphonGabc(''); setAntiphonError(''); setSelectedLiturgy(''); }}
+                  onClick={() => { setSelectedProper(null); setAntiphonGabc(''); setAntiphonMode(null); setAntiphonModeVar(null); setAntiphonError(''); setSelectedLiturgy(''); }}
                   className="text-[10px] text-gray-500 hover:text-red-400 underline transition-colors"
                 >
                   Clear Selection
@@ -1403,7 +1421,7 @@ export default function App() {
                   <div className="border-b-2 border-amber-300 pb-4">
                     <h4 className="text-[10px] uppercase tracking-wider text-amber-700 mb-2 font-bold flex items-center gap-1.5">
                       <Music className="w-3 h-3" />
-                      Antiphon: {selectedProper?.incipit}
+                      Antiphon: {selectedProper?.incipit} {antiphonMode && `(Mode ${antiphonMode}${antiphonModeVar ? ' ' + antiphonModeVar : ''})`}
                     </h4>
                     <div className="overflow-x-auto">
                       <ExsurgePreview gabc={antiphonGabc} />
