@@ -814,29 +814,28 @@ export default function App() {
       let s = str.replace(/Ordinary\s+Time/gi, 'OT');
       s = s.replace(/&/g, 'and');
       s = s.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-      s = s.replace(/[^a-zA-Z0-9\s\-_]/g, '');
-      s = s.trim().replace(/[\s\-_]+/g, '_');
+      s = s.replace(/[^a-zA-Z0-9\s]/g, ' ');
+      s = s.trim().replace(/\s+/g, ' ');
       return s;
     };
     const cleanTitle = cleanString(docTitle || '');
     const cleanSubtitle = cleanString(docSubtitle || '');
     
     let finalSubtitle = cleanSubtitle;
-    if (cleanSubtitle.toLowerCase().startsWith('psalm_tone_')) {
+    if (cleanSubtitle.toLowerCase().startsWith('psalm tone ')) {
       finalSubtitle = cleanSubtitle.substring(11);
     }
     
-    const shortTitle = cleanTitle.substring(0, 35);
-    const shortSub = finalSubtitle.substring(0, 35);
+    const shortTitle = cleanTitle.substring(0, 35).trim();
+    const shortSub = finalSubtitle.substring(0, 35).trim();
     
     let baseName = '';
     if (shortTitle && shortSub) {
-      baseName = `${shortTitle}_${shortSub}`;
+      baseName = `${shortTitle} - ${shortSub}`;
     } else {
-      baseName = shortTitle || shortSub || `psalm_${psalmTone}`;
+      baseName = shortTitle || shortSub || `psalm ${psalmTone}`;
     }
     
-    baseName = baseName.replace(/^_+|_+$/g, '');
     return `${baseName}.${ext}`;
   };
 
