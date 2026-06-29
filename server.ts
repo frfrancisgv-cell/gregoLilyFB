@@ -195,7 +195,16 @@ ${code}
         }
 
         // Run lualatex with shell-escape using relative path in its cwd
-        await execAsync(`lualatex --shell-escape -interaction=nonstopmode ${texFileName}`, { cwd: tmpDir });
+        try {
+          await execAsync(`lualatex --shell-escape -interaction=nonstopmode ${texFileName}`, { cwd: tmpDir });
+        } catch (lualatexError: any) {
+          // LuaLaTeX often returns a non-zero exit code due to warnings (like GregorioTeX "Rerun to fix")
+          // If the PDF exists, we can ignore the error.
+          const pdfPathCheck = path.join(tmpDir, `${uniqueId}.pdf`);
+          if (!fs.existsSync(pdfPathCheck)) {
+            throw lualatexError;
+          }
+        }
         
         const pdfPath = path.join(tmpDir, `${uniqueId}.pdf`);
         
@@ -209,7 +218,7 @@ ${code}
         }
       } catch (error: any) {
         console.error("LaTeX Compilation Error:");
-        console.error(error.stdout);
+        console.error(error.stdout || error.message);
         console.error(error.stderr);
         throw new Error(`Failed to compile LaTeX. Command failed: ${error.message}\nSTDOUT:\n${error.stdout}\nSTDERR:\n${error.stderr}`);
       } finally {
@@ -225,6 +234,272 @@ ${code}
     } catch (err: any) {
       console.error(err);
       res.status(500).json({ error: err.message || "Internal server error." });
+    }
+  });
+
+  // GregoBase chant lookup endpoint
+  // Lazily parsed from gregobase_online.sql and cached in memory
+  let gregobaseCache: Array<{id: number, incipit: string, officePart: string, mode: string, modeVar: string, gabc: string, version: string}> | null = null;
+
+  async function loadGregobase() {
+    if (gregobaseCache) return gregobaseCache;
+    const sqlPath = path.join(process.cwd(), 'gregobase_online.sql');
+    if (!fs.existsSync(sqlPath)) {
+      throw new Error('gregobase_online.sql not found');
+    }
+    const sql = await fs.promises.readFile(sqlPath, 'utf8');
+    const results: typeof gregobaseCache = [];
+
+    const insertIdx = sql.indexOf("INSERT INTO `gregobase_chants`");
+    if (insertIdx === -1) { gregobaseCache = results; return results; }
+
+    // Helper to unescape SQL escape sequences (used for all SQL string fields)
+    function unesc(s: string): string {
+      return s
+        .replace(/\\'/g, "'").replace(/\\\\/g, '\\').replace(/\\"/g, '"');
+    }
+
+    // Helper: read a single-quoted SQL string starting at `pos` (the quote char position)
+    // Returns { text, nextPos } where nextPos is the char after the closing quote
+    function readStr(pos: number): { text: string, nextPos: number } | null {
+      if (sql[pos] !== "'") return null;
+      let i = pos + 1, out = '';
+      while (i < sql.length) {
+        const c = sql[i];
+        if (c === '\\') { out += c + (sql[i+1] || ''); i += 2; }
+        else if (c === "'") {
+          if (sql[i+1] === "'") { out += "''"; i += 2; }
+          else return { text: unesc(out), nextPos: i + 1 };
+        } else { out += c; i++; }
+      }
+      return null;
+    }
+
+    // Advance past N comma-separated SQL values starting at `pos`
+    // Returns new position after skipping N values
+    function skipFields(pos: number, n: number): number {
+      for (let i = 0; i < n && pos < sql.length; i++) {
+        // skip whitespace / newlines
+        while (pos < sql.length && /[ \t\r\n]/.test(sql[pos])) pos++;
+        if (sql[pos] === ',') pos++; // skip comma from previous field
+        while (pos < sql.length && /[ \t\r\n]/.test(sql[pos])) pos++;
+
+        if (sql[pos] === ')') return pos; // end of row
+
+        if (sql.slice(pos, pos + 4) === 'NULL') {
+          pos += 4;
+        } else if (sql[pos] === "'") {
+          const r = readStr(pos);
+          if (r) pos = r.nextPos;
+          else { // skip broken string
+            while (pos < sql.length && sql[pos] !== ',' && sql[pos] !== ')') pos++;
+          }
+        } else {
+          // numeric
+          while (pos < sql.length && sql[pos] !== ',' && sql[pos] !== ')' && sql[pos] !== '\n') pos++;
+        }
+      }
+      return pos;
+    }
+
+    // Regex to match the first 8 fields of each row (the ones we know work):
+    // (id, cantus_id, version, incipit, initial, office_part, mode, mode_var, ...)
+    // Fields are 0-based. We capture: 0=id, 3=incipit, 5=office_part, 6=mode, 7=mode_var
+    const rowRegex = /^\((\d+),\s*(NULL|'(?:[^'\\]|\\.)*'),\s*('(?:[^'\\]|\\.)*'|NULL),\s*('(?:[^'\\]|\\.)*'|NULL),\s*\d+,\s*('(?:[^'\\]|\\.)*'|NULL),\s*('(?:[^'\\]|\\.)*'|NULL),\s*('(?:[^'\\]|\\.)*'|NULL)/gm;
+    rowRegex.lastIndex = insertIdx;
+
+    let m: RegExpExecArray | null;
+    while ((m = rowRegex.exec(sql)) !== null) {
+      const id = parseInt(m[1], 10);
+      const version = m[3] === 'NULL' ? '' : unesc(m[3].slice(1, -1)).trim();
+      const incipit = m[4] === 'NULL' ? '' : unesc(m[4].slice(1, -1)).trim();
+      const officePart = m[5] === 'NULL' ? '' : unesc(m[5].slice(1, -1)).toLowerCase().trim();
+      const mode = m[6] === 'NULL' ? '' : unesc(m[6].slice(1, -1)).trim();
+      const modeVar = m[7] === 'NULL' ? '' : unesc(m[7].slice(1, -1)).trim();
+
+      if (!incipit) continue;
+
+      // Now find the GABC field (field 11 = index 11)
+      // We are after 8 fields (0-7). Skip fields 8, 9, 10 (author, created, updated)
+      // Field 8 starts right after m[0] ends
+      let pos = m.index + m[0].length;
+      // Skip 3 more commas+fields (8=author, 9=created, 10=updated) to reach field 11
+      pos = skipFields(pos, 3);
+      
+      // Now read the GABC field (field 11)
+      // skip whitespace, then comma
+      while (pos < sql.length && /[ \t\r\n]/.test(sql[pos])) pos++;
+      if (sql[pos] === ',') pos++;
+      while (pos < sql.length && /[ \t\r\n]/.test(sql[pos])) pos++;
+
+      let gabc = '';
+      if (sql[pos] === "'") {
+        const r = readStr(pos);
+        if (r) gabc = r.text;
+      }
+      
+      // The GABC may be wrapped in double-quotes: "(c4)..."
+      gabc = gabc.trim();
+      
+      if (gabc.startsWith('[')) {
+        try {
+          // Unescape inner quotes that might have been escaped in SQL
+          let cleanJson = gabc;
+          if (cleanJson.startsWith('"[') && cleanJson.endsWith(']"')) {
+             cleanJson = cleanJson.slice(1, -1);
+          }
+          // Some records have escaped backslashes or quotes inside the JSON string
+          const parsed = JSON.parse(cleanJson);
+          if (Array.isArray(parsed)) {
+            const gabcItem = parsed.find((item: any) => Array.isArray(item) && item[0] === 'gabc');
+            if (gabcItem && gabcItem[1]) {
+              gabc = gabcItem[1];
+            }
+          }
+        } catch (e) {
+          // If JSON parsing fails, we'll try to extract it via regex
+          const match = gabc.match(/"gabc"\s*,\s*"((?:[^"\\]|\\.)*)"/);
+          if (match) {
+            gabc = match[1].replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+          } else {
+            // fallback to stripping outer quotes
+            gabc = gabc.replace(/^"+|"+$/g, '').trim();
+          }
+        }
+      } else {
+        gabc = gabc.replace(/^"+|"+$/g, '').trim();
+      }
+
+      // Unescape any leftover Unicode sequences (e.g. \u00e9) in plain strings or fallback regex
+      gabc = gabc.replace(/\\u([0-9a-fA-F]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
+
+      results!.push({ id, incipit, officePart, mode, modeVar, gabc, version });
+    }
+
+    gregobaseCache = results;
+    console.log(`GregoBase loaded: ${results.length} chants`);
+    return results;
+  }
+
+
+  app.get('/api/gregobase-chant', async (req, res) => {
+    try {
+      const db = await loadGregobase();
+      const { id, incipit, type } = req.query as Record<string, string>;
+
+      let match: typeof db[0] | undefined;
+      let candidates: typeof db | undefined;
+
+      if (id) {
+        match = db.find(c => c.id === parseInt(id));
+      } else if (incipit) {
+        // Normalize: remove parenthesized metadata, remove diacritics, lowercase, strip punctuation
+        const norm = (s: string) => s.replace(/\([^)]+\)/g, '').toLowerCase()
+          .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+          .replace(/[^a-z\s]/g, '').trim();
+        const needle = norm(incipit);
+        // First try to match by office-part (in=Introit, of=Offertory, co=Communion)
+        const partMap: Record<string, string> = { 'Introit': 'in', 'Offertory': 'of', 'Communion': 'co', 'Gradual': 'gr', 'Alleluia': 'al', 'Tract': 'tr' };
+        const targetPart = type ? partMap[type] || '' : '';
+
+        // Gather all candidates (exact matches and prefix matches in both directions)
+        const exactMatches = db.filter(c => norm(c.incipit) === needle);
+        const prefixMatches = db.filter(c => {
+          const incNorm = norm(c.incipit);
+          return incNorm !== '' && (incNorm.startsWith(needle) || needle.startsWith(incNorm));
+        });
+
+        // Combine and deduplicate candidates by ID, filtering for compatibility
+        const candidatesMap = new Map<number, typeof db[0]>();
+        for (const c of [...exactMatches, ...prefixMatches]) {
+          const op = c.officePart.toLowerCase();
+          const isCompatible = !targetPart || op === targetPart || op === 'an';
+          if (isCompatible) {
+            candidatesMap.set(c.id, c);
+          }
+        }
+        candidates = Array.from(candidatesMap.values());
+
+        // If still no candidates, fallback to word match (with compatibility check)
+        if (candidates.length === 0) {
+          const words = needle.split(/\s+/).slice(0, 2);
+          candidates = db.filter(c => {
+            const incNorm = norm(c.incipit);
+            const op = c.officePart.toLowerCase();
+            const isCompatible = !targetPart || op === targetPart || op === 'an';
+            return isCompatible && words.every(w => incNorm.includes(w));
+          });
+        }
+
+        // Score and sort candidates
+        if (candidates.length > 0) {
+          candidates.sort((a, b) => {
+            const getScore = (c: typeof db[0]) => {
+              let score = 0;
+              const ver = c.version.toLowerCase();
+              const op = c.officePart.toLowerCase();
+
+              // Prioritize correct office part (high priority as requested by user)
+              if (targetPart && op === targetPart) {
+                score += 25;
+              }
+
+              // Prioritize Solesmes versions
+              if (ver.includes('solesmes')) {
+                score += 10;
+              }
+              
+              // Heavily penalize 'salmodia' simplified versions to avoid psalm tones
+              if (ver.includes('salmodia')) {
+                score -= 30;
+              }
+              
+              // Penalize Palmer & Burgess (English) versions
+              if (ver.includes('palmer')) {
+                score -= 10;
+              }
+              
+              // Slight penalization for Simplex
+              if (ver.includes('simplex')) {
+                score -= 2;
+              }
+
+              return score;
+            };
+
+            return getScore(b) - getScore(a);
+          });
+
+          match = candidates[0];
+        }
+      }
+
+      if (!match) {
+        return res.status(404).json({ error: 'Chant not found', id, incipit, type });
+      }
+
+      res.json({
+        match: {
+          id: match.id,
+          incipit: match.incipit,
+          officePart: match.officePart,
+          mode: match.mode,
+          modeVar: match.modeVar,
+          gabc: match.gabc,
+          version: match.version
+        },
+        candidates: (typeof candidates !== 'undefined' && candidates) ? candidates.map(c => ({
+          id: c.id,
+          incipit: c.incipit,
+          officePart: c.officePart,
+          mode: c.mode,
+          modeVar: c.modeVar,
+          version: c.version
+        })) : []
+      });
+    } catch (err: any) {
+      console.error('GregoBase lookup error:', err);
+      res.status(500).json({ error: err.message || 'Internal server error' });
     }
   });
 

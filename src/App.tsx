@@ -1,10 +1,11 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Download, FileCode, CheckCircle2, Copy, Eye, Image as ImageIcon } from 'lucide-react';
+import { Download, FileCode, CheckCircle2, Copy, Eye, Image as ImageIcon, Music } from 'lucide-react';
 import { useJgabc } from './hooks/useJgabc';
 import { convertGabcToLilypond, ConvertOptions } from './lib/gabcToLilypond';
 import JSZip from 'jszip';
 import { ExsurgePreview } from './components/ExsurgePreview';
 import { LilyPondPreview } from './components/LilyPondPreview';
+import { liturgicalData, getUpcomingCelebrations, getCelebrationDatesMap, getLiturgicalCycle, extractPsalmKey, type ProperEntry } from './lib/liturgicalData';
 
 
 const psalmModules = import.meta.glob('./lib/jgabc/psalms/*.txt', { query: '?raw', import: 'default' }) as Record<string, () => Promise<string>>;
@@ -31,6 +32,70 @@ function cleanPolyGabcForGregorio(gabc: string): string {
   return gabc.replace(/\{([^}]+)\}(?:\{[^}]+\})*[a-zA-Z0-9\._<>\.#xy!r]*/g, "$1");
 }
 
+// GABC letter → diatonic pitch index (same anchor as gabcToLilypond.ts)
+// diatonicPitches[28] = "c'" (middle C)
+const diatonicPitches = [
+  "c,,","d,,","e,,","f,,","g,,","a,,","b,,",
+  "c,","d,","e,","f,","g,","a,","b,",
+  "c","d","e","f","g","a","b",
+  "c'","d'","e'","f'","g'","a'","b'",
+  "c''","d''","e''","f''","g''","a''","b''"
+];
+
+function gabcFirstNoteName(gabc: string): string | null {
+  // Extract clef
+  const clefMatch = gabc.match(/\(([cf][1-4]b?)\)/i);
+  const clef = clefMatch ? clefMatch[1].toLowerCase() : 'c4';
+  const clefType = clef[0];
+  const clefLine = parseInt(clef[1]) || 4;
+  const anchorPos = (clefLine * 2) + 1;
+  const anchorPitchIndex = clefType === 'c' ? 28 : 24; // c' or a (treble)
+  // Find first pitched note (letters a-m, not clef-related)
+  const noteMatch = gabc.match(/\(([^)]+)\)/);
+  if (!noteMatch) return null;
+  // Find letters a-m in the notation, skipping clef tokens
+  const tokens = gabc.replace(/\([^)]+\)/g, (m) => {
+    // Keep non-clef notation, strip clef
+    if (/^[cf][1-4]b?$/.test(m.slice(1, -1).trim())) return ' ';
+    return m;
+  });
+  const firstNote = tokens.match(/\(([^)]+)\)/);
+  if (!firstNote) return null;
+  const notationStr = firstNote[1].trim();
+  const chars = notationStr.replace(/[^a-m]/gi, '');
+  if (!chars) return null;
+  const ch = chars[0].toLowerCase();
+  const pos = ch.charCodeAt(0) - 97; // 'a'=0
+  const pitchIdx = anchorPitchIndex + (pos - anchorPos);
+  if (pitchIdx < 0 || pitchIdx >= diatonicPitches.length) return null;
+  // Return just the letter name (C, D, E, F, G, A, B)
+  return diatonicPitches[pitchIdx].replace(/[,']/g, '').toUpperCase();
+}
+
+// Map gregobase mode number + optional first note to a jgabc tone string
+function modeToTone(mode: string, firstNote?: string | null, availableTones?: string[]): string {
+  const m = mode.trim();
+  // If we have available tones from jgabc and a first note, try to match
+  if (availableTones && firstNote) {
+    // jgabc tone variant letter matches the first note
+    const candidates = availableTones.filter(t => t.startsWith(m + '.'));
+    const noteMatch = candidates.find(t => {
+      const variant = t.slice(m.length + 1).toUpperCase();
+      return variant === firstNote || variant.startsWith(firstNote);
+    });
+    if (noteMatch) return noteMatch;
+    if (candidates.length > 0) return candidates[0];
+  }
+  // Default fallback map
+  const defaults: Record<string, string> = {
+    '1': '1.D', '2': '2.D', '3': '3.a', '4': '4.E',
+    '5': '5.a', '6': '6.F', '7': '7.a', '8': '8.G',
+    'g': '1.D', 'd': '2.D', 'e': '3.a', 'E': '4.E',
+    'f': '6.F', 'G': '8.G',
+  };
+  return defaults[m] || '1.D';
+}
+
 export default function App() {
   const jgabcLoaded = useJgabc();
   const [psalmText, setPsalmText] = useState("Dixit Dóminus Dómino meo: * Sede a dextris meis:\nDonec ponam inimícos tuos, * scabéllum pedum tuórum.");
@@ -43,6 +108,28 @@ export default function App() {
   
   const [polyTones, setPolyTones] = useState<{name: string, gabc: string}[]>([]);
   const [selectedPolyToneName, setSelectedPolyToneName] = useState("Mode 1 4pt");
+
+  // --- Proper Antiphon state ---
+  const today = new Date();
+  const currentCycle = getLiturgicalCycle(today);
+  const upcomingDays = useMemo(() => getUpcomingCelebrations(today), []);
+  const celebrationDatesMap = useMemo(() => getCelebrationDatesMap(today), []);
+  const [selectedLiturgy, setSelectedLiturgy] = useState<string>('');
+  const [selectedProper, setSelectedProper] = useState<ProperEntry | null>(null);
+  const [antiphonGabc, setAntiphonGabc] = useState<string>('');
+  const [antiphonLoading, setAntiphonLoading] = useState(false);
+  const [antiphonGregobaseId, setAntiphonGregobaseId] = useState<number | null>(null);
+  const [antiphonError, setAntiphonError] = useState<string>('');
+  const [antiphonCandidates, setAntiphonCandidates] = useState<any[]>([]);
+  const [selectedCandidateId, setSelectedCandidateId] = useState<number | null>(null);
+
+  // --- Verse alternation settings ---
+  const [chantVersesPerCycle, setChantVersesPerCycle] = useState(1);
+  const [polyVersesPerCycle, setPolyVersesPerCycle] = useState(1);
+
+  // --- LilyPond staff size ---
+  const [lilyStaffSize, setLilyStaffSize] = useState(14);
+  const [gregorioStaffSize, setGregorioStaffSize] = useState(17);
 
   const fetchPolyTones = async () => {
     try {
@@ -61,6 +148,7 @@ export default function App() {
   }, []);
   
   const [includeGloriaPatri, setIncludeGloriaPatri] = useState(true);
+  const [pdfTotalVerses, setPdfTotalVerses] = useState(3);
 
   const [options, setOptions] = useState<ConvertOptions>({
     compressReciting: true,
@@ -242,10 +330,11 @@ export default function App() {
   }, [psalmTone, jgabcLoaded]);
 
   useEffect(() => {
-    if (!docSubtitle || docSubtitle.startsWith("Psalm Tone:")) {
+    // Only auto-update subtitle when no proper is selected
+    if (!selectedProper && (!docSubtitle || docSubtitle.startsWith("Psalm Tone:"))) {
       setDocSubtitle(`Psalm Tone: ${psalmTone}`);
     }
-  }, [psalmTone]);
+  }, [psalmTone, selectedProper]);
 
   useEffect(() => {
     if (!psalmTone || polyTones.length === 0) return;
@@ -261,6 +350,122 @@ export default function App() {
     }
   }, [psalmTone, polyTones]);
 
+  // --- Load proper antiphon from GregoBase ---
+  const applyChantData = async (data: any, proper: ProperEntry) => {
+    let finalGabc = data.gabc || '';
+    if (data.mode) {
+      let annotation = data.mode;
+      if (data.modeVar && data.modeVar !== 'NULL' && data.modeVar !== '') {
+        annotation += ` ${data.modeVar}`;
+      }
+      if (finalGabc && !finalGabc.includes('annotation:')) {
+        if (finalGabc.includes('%%')) {
+           finalGabc = `annotation: ${annotation};\n` + finalGabc;
+        } else {
+           finalGabc = `annotation: ${annotation};\n%%\n` + finalGabc;
+        }
+      }
+    }
+    setAntiphonGabc(finalGabc);
+    setAntiphonGregobaseId(data.id || null);
+
+    // Derive psalm tone from mode + variant (or fallback to first note)
+    let tone = "1.D";
+    if (data.mode) {
+      if (data.modeVar && data.modeVar !== 'NULL' && data.modeVar !== '') {
+        const targetTone = `${data.mode}.${data.modeVar}`.toLowerCase();
+        const matchedTone = availableTones.find(t => t.toLowerCase() === targetTone);
+        if (matchedTone) {
+          tone = matchedTone;
+        }
+      }
+      if (!tone || tone === "1.D") {
+        const firstNote = gabcFirstNoteName(finalGabc);
+        tone = modeToTone(data.mode, firstNote, availableTones);
+      }
+      setPsalmTone(tone);
+    }
+
+    // Auto-load the appointed psalm
+    const psalmKey = extractPsalmKey(proper.verses);
+    if (psalmKey) {
+      const path = `./lib/jgabc/psalms/${psalmKey}.txt`;
+      if (psalmModules[path]) {
+        try {
+          const rawText = await psalmModules[path]();
+          const text = typeof rawText === 'string' ? rawText : (rawText as any)?.default || String(rawText);
+          let cleaned = text
+            .split('\n')
+            .filter((l: string) => !l.startsWith('v.') && !l.startsWith('ps.') && l.trim().length > 0)
+            .map((l: string) => l.replace(/^\d+\.\s*/, '').replace(/<[^>]+>/g, '').trim())
+            .join('\n');
+          if (includeGloriaPatri) {
+            cleaned += '\nGlória Patri, et Fílio, * et Spirítui Sancto.\nSicut erat in princípio, et nunc, et semper, * et in sǽcula sæculórum. Amen.';
+          }
+          setPsalmText(cleaned);
+          // Set doc title from proper
+          const psalmNum = parseInt(psalmKey, 10);
+          const psalmLabel = isNaN(psalmNum) ? psalmKey : `Psalm ${psalmNum}`;
+          setDocTitle(`${proper.day} — ${proper.type}`);
+          setDocSubtitle(`${proper.incipit}, ${psalmLabel}, Tone ${tone}`);
+        } catch (err) {
+          console.error('Failed to load psalm', err);
+        }
+      }
+    }
+  };
+
+  // --- Load proper antiphon from GregoBase ---
+  const loadProper = async (proper: ProperEntry) => {
+    setSelectedProper(proper);
+    setAntiphonGabc('');
+    setAntiphonError('');
+    setAntiphonLoading(true);
+    setAntiphonCandidates([]);
+    setSelectedCandidateId(null);
+    try {
+      const params = new URLSearchParams({ incipit: proper.incipit, type: proper.type });
+      const res = await fetch(`/api/gregobase-chant?${params}`);
+      if (!res.ok) {
+        setAntiphonError(`Not found in GregoBase: ${proper.incipit}`);
+        setAntiphonGabc('');
+        setAntiphonGregobaseId(null);
+      } else {
+        const data = await res.json();
+        if (data.match) {
+          await applyChantData(data.match, proper);
+          setAntiphonCandidates(data.candidates || []);
+          setSelectedCandidateId(data.match.id);
+        }
+      }
+    } catch (err: any) {
+      setAntiphonError(err.message || 'Failed to load antiphon');
+    } finally {
+      setAntiphonLoading(false);
+    }
+  };
+
+  const loadCandidateChant = async (candidateId: number, proper: ProperEntry) => {
+    setAntiphonLoading(true);
+    setAntiphonError('');
+    try {
+      const res = await fetch(`/api/gregobase-chant?id=${candidateId}`);
+      if (!res.ok) {
+        setAntiphonError(`Failed to load chant version ID: ${candidateId}`);
+      } else {
+        const data = await res.json();
+        if (data.match) {
+          await applyChantData(data.match, proper);
+          setSelectedCandidateId(candidateId);
+        }
+      }
+    } catch (err: any) {
+      setAntiphonError(err.message || 'Failed to load version');
+    } finally {
+      setAntiphonLoading(false);
+    }
+  };
+
   const generateOutput = async () => {
     if (!window.applyPsalmTone) {
       alert("jgabc library is still loading or failed to load. Please try again in a few seconds.");
@@ -268,7 +473,40 @@ export default function App() {
     }
 
     try {
-      const verses = psalmText.split('\n').filter(line => line.trim().length > 0);
+      const allLines = psalmText.split('\n').filter(line => line.trim().length > 0);
+      let psalmVerses = [...allLines];
+      let doxologyLines: string[] = [];
+      
+      const hasGloria = allLines.some(l => l.toLowerCase().includes('gloria patri') || l.toLowerCase().includes('glória patri'));
+      if (hasGloria) {
+        const gloriaIdx = allLines.findIndex(l => l.toLowerCase().includes('gloria patri') || l.toLowerCase().includes('glória patri'));
+        if (gloriaIdx !== -1) {
+          psalmVerses = allLines.slice(0, gloriaIdx);
+          if (includeGloriaPatri) {
+            doxologyLines = allLines.slice(gloriaIdx);
+          }
+        }
+      } else if (includeGloriaPatri) {
+        doxologyLines = [
+          'Glória Patri, et Fílio, * et Spirítui Sancto.',
+          'Sicut erat in princípio, et nunc, et semper, * et in sǽcula sæculórum. Amen.'
+        ];
+      }
+
+      const numPsalmVerses = Math.max(0, pdfTotalVerses - 1);
+      const selectedPsalmVerses = psalmVerses.slice(0, numPsalmVerses);
+      const verses = [...selectedPsalmVerses, ...doxologyLines];
+
+      // Compute effective title/subtitle
+      let effectiveTitle = docTitle || 'Psalm';
+      let effectiveSubtitle = docSubtitle || `Psalm Tone: ${psalmTone}`;
+      if (selectedProper) {
+        const psalmKey = extractPsalmKey(selectedProper.verses);
+        const psalmNum = psalmKey ? parseInt(psalmKey, 10) : NaN;
+        const psalmLabel = psalmKey ? (isNaN(psalmNum) ? psalmKey : `Psalm ${psalmNum}`) : selectedProper.verses;
+        effectiveTitle = `${selectedProper.day} — ${selectedProper.type}`;
+        effectiveSubtitle = `${selectedProper.incipit}, ${psalmLabel}, Tone ${psalmTone}`;
+      }
       
       let latexString = `% =========================================================================
 % IMPORTANT: You MUST compile this file with the --shell-escape flag!
@@ -284,6 +522,8 @@ export default function App() {
 \\usepackage{lyluatex}
 \\usepackage[margin=1in]{geometry}
 
+\grechangestaffsize{${gregorioStaffSize}}
+
 % Color the mediant star red
 \\let\\oldgreheightstar\\greheightstar
 \\renewcommand{\\greheightstar}{\\textcolor{gregoriocolor}{\\oldgreheightstar}}
@@ -291,14 +531,25 @@ export default function App() {
 \\begin{document}
 
 \\begin{center}
-  \\textbf{\\Large ${docTitle || "Psalm"}}\\\\[1ex]
-  \\textit{\\large ${docSubtitle || `Psalm Tone: ${psalmTone}`}}
+  \\textbf{\\Large ${effectiveTitle}}\\\\[1ex]
+  \\textit{\\large ${effectiveSubtitle}}
 \\end{center}
 
 `;
 
+      // Include antiphon GABC before psalm verses if one is selected
+      if (antiphonGabc) {
+        const cleanAntiphon = antiphonGabc.replace(/<\/?(?:b|i|v|sp)[^>]*>/g, '');
+        latexString += `% Antiphon\n\\begin{gabccode}\n${cleanAntiphon}\n\\end{gabccode}\n\n`;
+      }
+
+      // Verse alternation: determine which verses are chant vs. polyphony
+      // Cycle: [chantVersesPerCycle chant verses] then [polyVersesPerCycle poly verses] repeating
+      const cycleLen = chantVersesPerCycle + polyVersesPerCycle;
+
       verses.forEach((verseText, index) => {
-        const isOdd = (index + 1) % 2 !== 0; // 1-based: 1, 3, 5 are odd
+        const posInCycle = cycleLen > 0 ? index % cycleLen : 0;
+        const isChant = polyVersesPerCycle === 0 || (chantVersesPerCycle > 0 && posInCycle < chantVersesPerCycle);
         
         let clef = 'c4';
         let cleanChantGabc = chantGabc;
@@ -318,7 +569,6 @@ export default function App() {
 
             gabcRaw = `(${clef}) `;
 
-            // Manually split by * so jgabc applies the mediant and termination separately.
             const parts = verseText.split('*');
             if (parts.length > 0) {
                 let medInput: any = medGabc || psalmTone;
@@ -341,7 +591,6 @@ export default function App() {
             }
 
             if (parts.length > 1) {
-                // Add the star
                 const gabcStar = '<v>\\greheightstar</v>';
                 gabcRaw += ` ${gabcStar}(:) `;
                 const termResult = (window as any).applyPsalmTone({ 
@@ -357,17 +606,15 @@ export default function App() {
             
         } catch (err: any) {
             console.error("applyPsalmTone failed:", err);
-            // Graceful fallback for GABC format so script doesn't crash LilyPond converter
             gabcRaw = `(c4) ${verseText} (::)`;
         }
 
-        if (isOdd) {
+        if (isChant) {
           // Chant verse (Gregorio)
           latexString += `% Verse ${index + 1} (Chant)\n\\begin{gabccode}\n${gabcRaw}\n\\end{gabccode}\n\n`;
         } else {
           // Falsobordone Polyphony verse (LilyPond)
           let polyGabcRaw = "";
-          // Extract clef from polyphony GABC; if absent, inherit from chant
           const polyClefMatchGen = polyphonyGabc.match(/^\s*\(([cf][1-4]b?)\)/i);
           const polyClef = polyClefMatchGen ? polyClefMatchGen[1].toLowerCase() : clef;
           try {
@@ -376,7 +623,6 @@ export default function App() {
 
               if (textParts.length > 0 && polyParts.length > 0) {
                   let polyInput: any = polyParts[0].trim();
-                  // Strip leading clef from polyInput so jgabc doesn't choke on it
                   polyInput = polyInput.replace(/^\s*\([cf][1-4]b?\)\s*/i, '');
                   if ((window as any).getGabcTones && (window as any).removeIntonation) {
                       try {
@@ -441,7 +687,7 @@ export default function App() {
           }
           const hasClef = /^\s*\(([cf][1-4])\)/i.test(polyGabcRaw);
           const lilypondStr = convertGabcToLilypond(hasClef ? polyGabcRaw : `(${polyClef}) ${polyGabcRaw}`, { ...options, noHeader: true });
-          latexString += `% Verse ${index + 1} (Falsobordone)\n\\noindent\\begin{lilypond}[fragment=false]\n\\paper {\n  indent = 0\\mm\n  short-indent = 0\\mm\n}\n\n${lilypondStr}\n\\end{lilypond}\n\n`;
+          latexString += `% Verse ${index + 1} (Falsobordone)\n\\noindent\\begin{lilypond}[staffsize=${lilyStaffSize},fragment=false]\n\\paper {\n  indent = 0\\mm\n  short-indent = 0\\mm\n}\n\n${lilypondStr}\n\\end{lilypond}\n\n`;
         }
       });
 
@@ -554,6 +800,143 @@ export default function App() {
           
           <div className="lg:col-span-4 flex flex-col gap-6">
             
+            {/* Proper Antiphon Selector */}
+            <div className="bg-[#111111] border border-[#c5a059]/20 rounded-xl p-5 space-y-3">
+              <h2 className="text-[10px] uppercase tracking-[0.2em] text-[#c5a059] font-bold pb-2 border-b border-[#2a2a2a] flex items-center gap-2">
+                <Music className="w-4 h-4" /> Proper Antiphon
+                <span className="ml-auto text-[#c5a059]/50 text-[9px] normal-case tracking-normal">Year {currentCycle}</span>
+              </h2>
+
+              {/* Dropdown 1: Select Liturgical Day */}
+              <div>
+                <label className="text-[10px] uppercase tracking-widest text-gray-500 mb-1 block">Liturgical Day</label>
+                <select
+                  className="w-full bg-[#1a1a1a] border border-[#333] text-[#d4d4d8] rounded p-2 focus:border-[#c5a059] outline-none text-xs transition-colors cursor-pointer"
+                  value={selectedLiturgy}
+                  onChange={(e) => {
+                    setSelectedLiturgy(e.target.value);
+                    setSelectedProper(null);
+                    setAntiphonGabc('');
+                    setAntiphonError('');
+                  }}
+                >
+                  <option value="">— Select a Celebration —</option>
+                  {/* Upcoming days first */}
+                  {upcomingDays.length > 0 && (
+                    <optgroup label="Upcoming (next 7 days)">
+                      {upcomingDays.filter(day =>
+                        liturgicalData.some(e => e.day === day && (e.cycle === 'All' || e.cycle === currentCycle))
+                      ).map(day => (
+                        <option key={day} value={day}>{day}</option>
+                      ))}
+                    </optgroup>
+                  )}
+                  {/* All other days */}
+                  <optgroup label="All Celebrations">
+                    {(() => {
+                      const allDays = [...new Set(liturgicalData
+                        .filter(e => e.cycle === 'All' || e.cycle === currentCycle)
+                        .map(e => e.day)
+                      )];
+                      const remainingDays = allDays.filter(day => !upcomingDays.includes(day));
+                      return remainingDays.sort((a, b) => {
+                        const dateA = celebrationDatesMap[a] ? celebrationDatesMap[a].getTime() : Infinity;
+                        const dateB = celebrationDatesMap[b] ? celebrationDatesMap[b].getTime() : Infinity;
+                        if (dateA !== dateB) return dateA - dateB;
+                        return a.localeCompare(b);
+                      }).map(day => (
+                        <option key={day} value={day}>{day}</option>
+                      ));
+                    })()}
+                  </optgroup>
+                </select>
+              </div>
+
+              {/* Dropdown 2: Select Proper (Introit/Offertory/Communion) */}
+              {selectedLiturgy && (() => {
+                const propers = liturgicalData.filter(e =>
+                  e.day === selectedLiturgy && (e.cycle === 'All' || e.cycle === currentCycle)
+                );
+                return propers.length > 0 ? (
+                  <div className="flex flex-col gap-3">
+                    <div>
+                      <label className="text-[10px] uppercase tracking-widest text-gray-500 mb-1 block">Antiphon</label>
+                      <select
+                        className="w-full bg-[#1a1a1a] border border-[#333] text-[#d4d4d8] rounded p-2 focus:border-[#c5a059] outline-none text-xs transition-colors cursor-pointer"
+                        value={selectedProper?.id ?? ''}
+                        onChange={(e) => {
+                          const id = parseInt(e.target.value);
+                          const found = propers.find(p => p.id === id);
+                          if (found) loadProper(found);
+                        }}
+                      >
+                        <option value="">— Select Antiphon —</option>
+                        {propers.map(p => (
+                          <option key={p.id} value={p.id}>
+                            {p.type}: {p.incipit}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {antiphonCandidates.length > 1 && (
+                      <div>
+                        <label className="text-[10px] uppercase tracking-widest text-gray-500 mb-1 block">Chant Version / Source</label>
+                        <select
+                          className="w-full bg-[#1a1a1a] border border-[#333] text-[#d4d4d8] rounded p-2 focus:border-[#c5a059] outline-none text-xs transition-colors cursor-pointer"
+                          value={selectedCandidateId ?? ''}
+                          onChange={(e) => {
+                            const cid = parseInt(e.target.value);
+                            if (selectedProper) {
+                              loadCandidateChant(cid, selectedProper);
+                            }
+                          }}
+                        >
+                          {antiphonCandidates.map(c => {
+                            const part = c.officePart ? ` [${c.officePart.toUpperCase()}]` : '';
+                            const modeStr = c.mode ? ` (Mode ${c.mode}${c.modeVar ? ' ' + c.modeVar : ''})` : '';
+                            return (
+                              <option key={c.id} value={c.id}>
+                                {c.version || `ID ${c.id}`}{part}{modeStr}
+                              </option>
+                            );
+                          })}
+                        </select>
+                      </div>
+                    )}
+                  </div>
+                ) : null;
+              })()}
+
+              {/* Antiphon status */}
+              {antiphonLoading && (
+                <div className="text-[11px] text-[#c5a059] animate-pulse flex items-center gap-1.5">
+                  <span className="w-3 h-3 rounded-full border border-[#c5a059] border-t-transparent animate-spin inline-block"></span>
+                  Searching GregoBase...
+                </div>
+              )}
+              {antiphonError && (
+                <div className="text-[11px] text-amber-500/80 bg-amber-500/10 border border-amber-500/20 rounded px-2 py-1.5">
+                  {antiphonError} — using tone from mode only.
+                </div>
+              )}
+              {selectedProper && antiphonGregobaseId && !antiphonLoading && (
+                <div className="text-[10px] text-green-500/70 flex items-center gap-1">
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                  Found in GregoBase (ID {antiphonGregobaseId}). Tone auto-set, psalm loaded.
+                </div>
+              )}
+              {selectedProper && (
+                <button
+                  type="button"
+                  onClick={() => { setSelectedProper(null); setAntiphonGabc(''); setAntiphonError(''); setSelectedLiturgy(''); }}
+                  className="text-[10px] text-gray-500 hover:text-red-400 underline transition-colors"
+                >
+                  Clear Selection
+                </button>
+              )}
+            </div>
+
             <div className="bg-[#111111] border border-[#2a2a2a] rounded-xl p-5 space-y-4">
               <h2 className="text-[10px] uppercase tracking-[0.2em] text-[#c5a059] font-bold pb-2 border-b border-[#2a2a2a] flex items-center gap-2">
                 <FileCode className="w-4 h-4" /> Source Configuration
@@ -781,6 +1164,91 @@ export default function App() {
                     </label>
                   ))}
                 </div>
+
+                {/* Verse Alternation */}
+                <div className="pt-4 border-t border-[#2a2a2a] space-y-3">
+                  <span className="text-[10px] uppercase tracking-widest text-gray-500 block">Verse Alternation (Chant : Polyphony)</span>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-[10px] text-gray-500 mb-1 block">Chant verses per cycle</label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="range" min={0} max={5} step={1}
+                          value={chantVersesPerCycle}
+                          onChange={(e) => setChantVersesPerCycle(parseInt(e.target.value))}
+                          className="flex-1 accent-[#c5a059]"
+                        />
+                        <span className="text-xs text-[#c5a059] w-4 text-right font-mono">{chantVersesPerCycle}</span>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-gray-500 mb-1 block">Poly verses per cycle</label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="range" min={0} max={5} step={1}
+                          value={polyVersesPerCycle}
+                          onChange={(e) => setPolyVersesPerCycle(parseInt(e.target.value))}
+                          className="flex-1 accent-[#c5a059]"
+                        />
+                        <span className="text-xs text-[#c5a059] w-4 text-right font-mono">{polyVersesPerCycle}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="text-[10px] text-gray-600 italic">
+                    Pattern: {chantVersesPerCycle === 0 ? 'All polyphony' : polyVersesPerCycle === 0 ? 'All chant' : `${chantVersesPerCycle} chant, ${polyVersesPerCycle} poly, repeat`}
+                  </div>
+                </div>
+
+                {/* Total Verses in PDF */}
+                <div className="pt-3 border-t border-[#2a2a2a]">
+                  <label className="text-[10px] uppercase tracking-widest text-gray-500 mb-1 flex justify-between">
+                    Total Verses to Include
+                    <span className="text-[#c5a059]/70 font-mono">{pdfTotalVerses} {pdfTotalVerses === 1 ? 'verse' : 'verses'}</span>
+                  </label>
+                  <input
+                    type="range" min={1} max={15} step={1}
+                    value={pdfTotalVerses}
+                    onChange={(e) => setPdfTotalVerses(parseInt(e.target.value))}
+                    className="w-full accent-[#c5a059]"
+                  />
+                  <div className="flex justify-between text-[9px] text-gray-600 mt-0.5">
+                    <span>1 (Doxology only)</span><span>15</span>
+                  </div>
+                </div>
+
+                {/* LilyPond Staff Size */}
+                <div className="pt-3 border-t border-[#2a2a2a]">
+                  <label className="text-[10px] uppercase tracking-widest text-gray-500 mb-1 flex justify-between">
+                    LilyPond Staff Size
+                    <span className="text-[#c5a059]/70 font-mono">{lilyStaffSize}pt</span>
+                  </label>
+                  <input
+                    type="range" min={10} max={24} step={1}
+                    value={lilyStaffSize}
+                    onChange={(e) => setLilyStaffSize(parseInt(e.target.value))}
+                    className="w-full accent-[#c5a059]"
+                  />
+                  <div className="flex justify-between text-[9px] text-gray-600 mt-0.5">
+                    <span>Smaller</span><span>Larger</span>
+                  </div>
+                </div>
+
+                {/* Gregorio Staff Size */}
+                <div className="pt-3 border-t border-[#2a2a2a]">
+                  <label className="text-[10px] uppercase tracking-widest text-gray-500 mb-1 flex justify-between">
+                    Gregorio Staff Size
+                    <span className="text-[#c5a059]/70 font-mono">{gregorioStaffSize}</span>
+                  </label>
+                  <input
+                    type="range" min={9} max={30} step={1}
+                    value={gregorioStaffSize}
+                    onChange={(e) => setGregorioStaffSize(parseInt(e.target.value))}
+                    className="w-full accent-[#c5a059]"
+                  />
+                  <div className="flex justify-between text-[9px] text-gray-600 mt-0.5">
+                    <span>Smaller</span><span>Larger</span>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -805,6 +1273,18 @@ export default function App() {
                 <span className="text-[10px] uppercase text-[#c5a059] hidden sm:block">Chant & Polyphony</span>
               </div>
               <div className="flex-1 overflow-auto bg-white p-4 space-y-6 flex flex-col">
+                {/* Antiphon Preview */}
+                {antiphonGabc && (
+                  <div className="border-b-2 border-amber-300 pb-4">
+                    <h4 className="text-[10px] uppercase tracking-wider text-amber-700 mb-2 font-bold flex items-center gap-1.5">
+                      <Music className="w-3 h-3" />
+                      Antiphon: {selectedProper?.incipit}
+                    </h4>
+                    <div className="overflow-x-auto">
+                      <ExsurgePreview gabc={antiphonGabc} />
+                    </div>
+                  </div>
+                )}
                 {preview.gabc ? (
                   <div className="border-b border-gray-100 pb-4">
                     <h4 className="text-[10px] uppercase tracking-wider text-gray-400 mb-2 font-semibold">Chant (Gregorian)</h4>

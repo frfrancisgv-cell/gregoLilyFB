@@ -9,9 +9,13 @@ export function ExsurgePreview({ gabc }: { gabc: string }) {
   useEffect(() => {
     if (!containerRef.current || !gabc) return;
     try {
-      // Need a clean string without trailing garbage.
+      let cleanedGabc = gabc.replace(/<\/?(?:v|b|i)[^>]*>/gi, '');
+
+      // Strip <v> and </v> tags which are used by Gregorio for spacing but not supported/needed in Exsurge
+      cleanedGabc = cleanedGabc.replace(/<\/?v>/gi, '');
+
       const ctxt = new exsurge.ChantContext();
-      const mappings = exsurge.Gabc.createMappingsFromSource(ctxt, gabc);
+      const mappings = exsurge.Gabc.createMappingsFromSource(ctxt, cleanedGabc);
       const score = new exsurge.ChantScore(ctxt, mappings, true);
       
       score.performLayoutAsync(ctxt, () => {

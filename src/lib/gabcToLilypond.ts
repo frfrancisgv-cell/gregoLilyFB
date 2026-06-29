@@ -213,7 +213,7 @@ export function convertGabcToLilypond(text: string, options: ConvertOptions = {}
             if (explicitE) activeAccidentals.e = 'x'; else if (lowNot.includes('e0')) delete activeAccidentals.e; // Flat
 
             let bracketMatches = [...partNotation.matchAll(/\{([^}]+)\}/g)];
-            let mStr = partNotation.replace(/(?:[a-zA-Z0-9][#xy]?)+(?=\{)/gi, ''); // strip ALL prefix tokens e.g. kxdx{
+            let mStr = partNotation.replace(/^[^\{]+(?=\{)/gi, ''); // strip ALL prefix tokens e.g. kxdx{
             mStr = mStr.replace(/\{([^}]+)\}/g, '').trim(); 
             
             let sStr = "", aStr = "", tStr = "", bStr = "";
@@ -231,14 +231,14 @@ export function convertGabcToLilypond(text: string, options: ConvertOptions = {}
             } else if (bracketMatches.length >= 3) {
                 if (melodyVoice === 'alto') { 
                     sStr = bracketMatches[0][1]; 
-                    tStr = bracketMatches[1][1]; 
-                    bStr = bracketMatches[2][1]; 
                     aStr = mStr; 
+                    tStr = bracketMatches[1][1];
+                    bStr = bracketMatches[2][1];
                 } else { 
                     sStr = bracketMatches[0][1]; 
                     aStr = bracketMatches[1][1]; 
-                    bStr = bracketMatches[2][1]; 
                     tStr = mStr; 
+                    bStr = bracketMatches[2][1];
                 }
             }
 
@@ -406,10 +406,10 @@ export function convertGabcToLilypond(text: string, options: ConvertOptions = {}
                 }
             } else {
                 let n = notes[0];
-                let sBase = n.s.replace(/\d+\.?/g, '').replace(/[\(\)]/g, '').replace(/!/g, '').trim();
-                let aBase = n.a.replace(/\d+\.?/g, '').replace(/[\(\)]/g, '').replace(/!/g, '').trim();
-                let tBase = n.t.replace(/\d+\.?/g, '').replace(/[\(\)]/g, '').replace(/!/g, '').trim();
-                let bBase = n.b.replace(/\d+\.?/g, '').replace(/[\(\)]/g, '').replace(/!/g, '').trim();
+                let sBase = n.s.replace(/\d+\.?/g, '').replace(/[\(\)]/g, '').trim();
+                let aBase = n.a.replace(/\d+\.?/g, '').replace(/[\(\)]/g, '').trim();
+                let tBase = n.t.replace(/\d+\.?/g, '').replace(/[\(\)]/g, '').trim();
+                let bBase = n.b.replace(/\d+\.?/g, '').replace(/[\(\)]/g, '').trim();
                 
                 if (sBase) curVerse.s.push(`${sBase}\\breve`); if (aBase) curVerse.a.push(`${aBase}\\breve`);
                 if (tBase) curVerse.t.push(`${tBase}\\breve`); if (bBase) curVerse.b.push(`${bBase}\\breve`);
