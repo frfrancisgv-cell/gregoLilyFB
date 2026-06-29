@@ -122,6 +122,9 @@ export default function App() {
   const [antiphonError, setAntiphonError] = useState<string>('');
   const [antiphonCandidates, setAntiphonCandidates] = useState<any[]>([]);
   const [selectedCandidateId, setSelectedCandidateId] = useState<number | null>(null);
+  const [antiphonSelectMode, setAntiphonSelectMode] = useState<'liturgical' | 'search'>('liturgical');
+  const [searchIncipit, setSearchIncipit] = useState('');
+  const [searchType, setSearchType] = useState('Communion');
 
   // --- Verse alternation settings ---
   const [chantVersesPerCycle, setChantVersesPerCycle] = useState(1);
@@ -461,6 +464,49 @@ export default function App() {
       }
     } catch (err: any) {
       setAntiphonError(err.message || 'Failed to load version');
+    } finally {
+      setAntiphonLoading(false);
+    }
+  };
+
+  const searchByIncipit = async (targetIncipit: string, targetType: string) => {
+    if (!targetIncipit.trim()) return;
+    setAntiphonLoading(true);
+    setAntiphonError('');
+    setAntiphonCandidates([]);
+    setSelectedCandidateId(null);
+    setSelectedProper(null);
+    try {
+      const params = new URLSearchParams({ incipit: targetIncipit.trim(), type: targetType });
+      const res = await fetch(`/api/gregobase-chant?${params}`);
+      if (!res.ok) {
+        setAntiphonError(`Not found in GregoBase: ${targetIncipit}`);
+        setAntiphonGabc('');
+        setAntiphonGregobaseId(null);
+      } else {
+        const data = await res.json();
+        if (data.match) {
+          const mockProper: ProperEntry = {
+            id: -1,
+            season: 'Search',
+            day: 'Ad-hoc Search',
+            type: targetType as any,
+            incipit: data.match.incipit,
+            translation: '',
+            source: '',
+            verses: 'Ps 1', // default placeholder
+            cycle: 'All'
+          };
+          setSelectedProper(mockProper);
+          await applyChantData(data.match, mockProper);
+          setAntiphonCandidates(data.candidates || []);
+          setSelectedCandidateId(data.match.id);
+        } else {
+          setAntiphonError(`No match found for: ${targetIncipit}`);
+        }
+      }
+    } catch (err: any) {
+      setAntiphonError(err.message || 'Failed to load chant');
     } finally {
       setAntiphonLoading(false);
     }
@@ -807,106 +853,185 @@ export default function App() {
                 <span className="ml-auto text-[#c5a059]/50 text-[9px] normal-case tracking-normal">Year {currentCycle}</span>
               </h2>
 
-              {/* Dropdown 1: Select Liturgical Day */}
-              <div>
-                <label className="text-[10px] uppercase tracking-widest text-gray-500 mb-1 block">Liturgical Day</label>
-                <select
-                  className="w-full bg-[#1a1a1a] border border-[#333] text-[#d4d4d8] rounded p-2 focus:border-[#c5a059] outline-none text-xs transition-colors cursor-pointer"
-                  value={selectedLiturgy}
-                  onChange={(e) => {
-                    setSelectedLiturgy(e.target.value);
+              {/* Tab Selector */}
+              <div className="flex border-b border-[#2a2a2a] mb-3">
+                <button
+                  type="button"
+                  className={`flex-1 pb-2 text-[9px] uppercase tracking-wider font-bold transition-colors ${antiphonSelectMode === 'liturgical' ? 'text-[#c5a059] border-b-2 border-[#c5a059]' : 'text-gray-500 hover:text-gray-300'}`}
+                  onClick={() => {
+                    setAntiphonSelectMode('liturgical');
+                    setAntiphonCandidates([]);
+                    setSelectedCandidateId(null);
                     setSelectedProper(null);
                     setAntiphonGabc('');
                     setAntiphonError('');
                   }}
                 >
-                  <option value="">— Select a Celebration —</option>
-                  {/* Upcoming days first */}
-                  {upcomingDays.length > 0 && (
-                    <optgroup label="Upcoming (next 7 days)">
-                      {upcomingDays.filter(day =>
-                        liturgicalData.some(e => e.day === day && (e.cycle === 'All' || e.cycle === currentCycle))
-                      ).map(day => (
-                        <option key={day} value={day}>{day}</option>
-                      ))}
-                    </optgroup>
-                  )}
-                  {/* All other days */}
-                  <optgroup label="All Celebrations">
-                    {(() => {
-                      const allDays = [...new Set(liturgicalData
-                        .filter(e => e.cycle === 'All' || e.cycle === currentCycle)
-                        .map(e => e.day)
-                      )];
-                      const remainingDays = allDays.filter(day => !upcomingDays.includes(day));
-                      return remainingDays.sort((a, b) => {
-                        const dateA = celebrationDatesMap[a] ? celebrationDatesMap[a].getTime() : Infinity;
-                        const dateB = celebrationDatesMap[b] ? celebrationDatesMap[b].getTime() : Infinity;
-                        if (dateA !== dateB) return dateA - dateB;
-                        return a.localeCompare(b);
-                      }).map(day => (
-                        <option key={day} value={day}>{day}</option>
-                      ));
-                    })()}
-                  </optgroup>
-                </select>
+                  By Liturgical Day
+                </button>
+                <button
+                  type="button"
+                  className={`flex-1 pb-2 text-[9px] uppercase tracking-wider font-bold transition-colors ${antiphonSelectMode === 'search' ? 'text-[#c5a059] border-b-2 border-[#c5a059]' : 'text-gray-500 hover:text-gray-300'}`}
+                  onClick={() => {
+                    setAntiphonSelectMode('search');
+                    setAntiphonCandidates([]);
+                    setSelectedCandidateId(null);
+                    setSelectedProper(null);
+                    setAntiphonGabc('');
+                    setAntiphonError('');
+                  }}
+                >
+                  Incipit Search
+                </button>
               </div>
 
-              {/* Dropdown 2: Select Proper (Introit/Offertory/Communion) */}
-              {selectedLiturgy && (() => {
-                const propers = liturgicalData.filter(e =>
-                  e.day === selectedLiturgy && (e.cycle === 'All' || e.cycle === currentCycle)
-                );
-                return propers.length > 0 ? (
-                  <div className="flex flex-col gap-3">
-                    <div>
-                      <label className="text-[10px] uppercase tracking-widest text-gray-500 mb-1 block">Antiphon</label>
-                      <select
-                        className="w-full bg-[#1a1a1a] border border-[#333] text-[#d4d4d8] rounded p-2 focus:border-[#c5a059] outline-none text-xs transition-colors cursor-pointer"
-                        value={selectedProper?.id ?? ''}
-                        onChange={(e) => {
-                          const id = parseInt(e.target.value);
-                          const found = propers.find(p => p.id === id);
-                          if (found) loadProper(found);
-                        }}
-                      >
-                        <option value="">— Select Antiphon —</option>
-                        {propers.map(p => (
-                          <option key={p.id} value={p.id}>
-                            {p.type}: {p.incipit}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
+              {antiphonSelectMode === 'liturgical' ? (
+                <>
+                  {/* Dropdown 1: Select Liturgical Day */}
+                  <div>
+                    <label className="text-[10px] uppercase tracking-widest text-gray-500 mb-1 block">Liturgical Day</label>
+                    <select
+                      className="w-full bg-[#1a1a1a] border border-[#333] text-[#d4d4d8] rounded p-2 focus:border-[#c5a059] outline-none text-xs transition-colors cursor-pointer"
+                      value={selectedLiturgy}
+                      onChange={(e) => {
+                        setSelectedLiturgy(e.target.value);
+                        setSelectedProper(null);
+                        setAntiphonGabc('');
+                        setAntiphonError('');
+                      }}
+                    >
+                      <option value="">— Select a Celebration —</option>
+                      {/* Upcoming days first */}
+                      {upcomingDays.length > 0 && (
+                        <optgroup label="Upcoming (next 7 days)">
+                          {upcomingDays.filter(day =>
+                            liturgicalData.some(e => e.day === day && (e.cycle === 'All' || e.cycle === currentCycle))
+                          ).map(day => (
+                            <option key={day} value={day}>{day}</option>
+                          ))}
+                        </optgroup>
+                      )}
+                      {/* All other days */}
+                      <optgroup label="All Celebrations">
+                        {(() => {
+                          const allDays = [...new Set(liturgicalData
+                            .filter(e => e.cycle === 'All' || e.cycle === currentCycle)
+                            .map(e => e.day)
+                          )];
+                          const remainingDays = allDays.filter(day => !upcomingDays.includes(day));
+                          return remainingDays.sort((a, b) => {
+                            const dateA = celebrationDatesMap[a] ? celebrationDatesMap[a].getTime() : Infinity;
+                            const dateB = celebrationDatesMap[b] ? celebrationDatesMap[b].getTime() : Infinity;
+                            if (dateA !== dateB) return dateA - dateB;
+                            return a.localeCompare(b);
+                          }).map(day => (
+                            <option key={day} value={day}>{day}</option>
+                          ));
+                        })()}
+                      </optgroup>
+                    </select>
+                  </div>
 
-                    {antiphonCandidates.length > 1 && (
+                  {/* Dropdown 2: Select Proper (Introit/Offertory/Communion) */}
+                  {selectedLiturgy && (() => {
+                    const propers = liturgicalData.filter(e =>
+                      e.day === selectedLiturgy && (e.cycle === 'All' || e.cycle === currentCycle)
+                    );
+                    return propers.length > 0 ? (
                       <div>
-                        <label className="text-[10px] uppercase tracking-widest text-gray-500 mb-1 block">Chant Version / Source</label>
+                        <label className="text-[10px] uppercase tracking-widest text-gray-500 mb-1 block">Antiphon</label>
                         <select
                           className="w-full bg-[#1a1a1a] border border-[#333] text-[#d4d4d8] rounded p-2 focus:border-[#c5a059] outline-none text-xs transition-colors cursor-pointer"
-                          value={selectedCandidateId ?? ''}
+                          value={selectedProper?.id ?? ''}
                           onChange={(e) => {
-                            const cid = parseInt(e.target.value);
-                            if (selectedProper) {
-                              loadCandidateChant(cid, selectedProper);
-                            }
+                            const id = parseInt(e.target.value);
+                            const found = propers.find(p => p.id === id);
+                            if (found) loadProper(found);
                           }}
                         >
-                          {antiphonCandidates.map(c => {
-                            const part = c.officePart ? ` [${c.officePart.toUpperCase()}]` : '';
-                            const modeStr = c.mode ? ` (Mode ${c.mode}${c.modeVar ? ' ' + c.modeVar : ''})` : '';
-                            return (
-                              <option key={c.id} value={c.id}>
-                                {c.version || `ID ${c.id}`}{part}{modeStr}
-                              </option>
-                            );
-                          })}
+                          <option value="">— Select Antiphon —</option>
+                          {propers.map(p => (
+                            <option key={p.id} value={p.id}>
+                              {p.type}: {p.incipit}
+                            </option>
+                          ))}
                         </select>
                       </div>
-                    )}
+                    ) : null;
+                  })()}
+                </>
+              ) : (
+                <div className="space-y-3">
+                  {/* Ad-hoc Incipit Search */}
+                  <div>
+                    <label className="text-[10px] uppercase tracking-widest text-gray-500 mb-1 block">Incipit Search</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Gustate, Tu es Petrus..."
+                      className="w-full bg-[#1a1a1a] border border-[#333] text-[#d4d4d8] rounded p-2 focus:border-[#c5a059] outline-none text-xs transition-colors"
+                      value={searchIncipit}
+                      onChange={(e) => setSearchIncipit(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          searchByIncipit(searchIncipit, searchType);
+                        }
+                      }}
+                    />
                   </div>
-                ) : null;
-              })()}
+
+                  <div>
+                    <label className="text-[10px] uppercase tracking-widest text-gray-500 mb-1 block">Usage Type</label>
+                    <select
+                      className="w-full bg-[#1a1a1a] border border-[#333] text-[#d4d4d8] rounded p-2 focus:border-[#c5a059] outline-none text-xs transition-colors cursor-pointer"
+                      value={searchType}
+                      onChange={(e) => setSearchType(e.target.value)}
+                    >
+                      <option value="Communion">Communion</option>
+                      <option value="Offertory">Offertory</option>
+                      <option value="Introit">Introit</option>
+                      <option value="Gradual">Gradual</option>
+                      <option value="Alleluia">Alleluia</option>
+                      <option value="Tract">Tract</option>
+                    </select>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => searchByIncipit(searchIncipit, searchType)}
+                    disabled={antiphonLoading || !searchIncipit.trim()}
+                    className="w-full bg-[#c5a059] hover:bg-[#d4b16a] text-black font-semibold py-2 rounded text-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider"
+                  >
+                    {antiphonLoading ? 'Searching...' : 'Search Chant'}
+                  </button>
+                </div>
+              )}
+
+              {/* Chant Version / Source selector, shown in either mode if candidates exist */}
+              {antiphonCandidates.length > 1 && (
+                <div>
+                  <label className="text-[10px] uppercase tracking-widest text-gray-500 mb-1 block">Chant Version / Source</label>
+                  <select
+                    className="w-full bg-[#1a1a1a] border border-[#333] text-[#d4d4d8] rounded p-2 focus:border-[#c5a059] outline-none text-xs transition-colors cursor-pointer"
+                    value={selectedCandidateId ?? ''}
+                    onChange={(e) => {
+                      const cid = parseInt(e.target.value);
+                      if (selectedProper) {
+                        loadCandidateChant(cid, selectedProper);
+                      }
+                    }}
+                  >
+                    {antiphonCandidates.map(c => {
+                      const part = c.officePart ? ` [${c.officePart.toUpperCase()}]` : '';
+                      const modeStr = c.mode ? ` (Mode ${c.mode}${c.modeVar ? ' ' + c.modeVar : ''})` : '';
+                      return (
+                        <option key={c.id} value={c.id}>
+                          {c.version || `ID ${c.id}`}{part}{modeStr}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+              )}
 
               {/* Antiphon status */}
               {antiphonLoading && (
