@@ -809,6 +809,36 @@ export default function App() {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const getDownloadFilename = (ext: string): string => {
+    const cleanString = (str: string) => {
+      let s = str.replace(/&/g, 'and');
+      s = s.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      s = s.replace(/[^a-zA-Z0-9\s\-_]/g, '');
+      s = s.trim().replace(/[\s\-_]+/g, '_');
+      return s;
+    };
+    const cleanTitle = cleanString(docTitle || '');
+    const cleanSubtitle = cleanString(docSubtitle || '');
+    
+    let finalSubtitle = cleanSubtitle;
+    if (cleanSubtitle.toLowerCase().startsWith('psalm_tone_')) {
+      finalSubtitle = cleanSubtitle.substring(11);
+    }
+    
+    const shortTitle = cleanTitle.substring(0, 35);
+    const shortSub = finalSubtitle.substring(0, 35);
+    
+    let baseName = '';
+    if (shortTitle && shortSub) {
+      baseName = `${shortTitle}_${shortSub}`;
+    } else {
+      baseName = shortTitle || shortSub || `psalm_${psalmTone}`;
+    }
+    
+    baseName = baseName.replace(/^_+|_+$/g, '');
+    return `${baseName}.${ext}`;
+  };
+
   const downloadFile = async () => {
     const zip = new JSZip();
     let finalCode = lualatexOutput;
@@ -833,7 +863,7 @@ export default function App() {
     const url = URL.createObjectURL(content);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `psalm_${psalmTone}.zip`;
+    a.download = getDownloadFilename('zip');
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -850,7 +880,7 @@ export default function App() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `psalm_${psalmTone}.pdf`;
+    a.download = getDownloadFilename('pdf');
     a.click();
     URL.revokeObjectURL(url);
   };
