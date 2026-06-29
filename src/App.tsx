@@ -209,7 +209,11 @@ export default function App() {
 
     // Preview Verse 1 (Chant)
     const verse1 = verses[0];
-    let gabcPreview = `(${clef}) `;
+    let toneAnnotation = psalmTone;
+    if (psalmTone.includes('.')) {
+        toneAnnotation = psalmTone.replace('.', ' ');
+    }
+    let gabcPreview = `annotation: ${toneAnnotation};\n%%\n(${clef}) `;
     try {
         const parts = verse1.split('*');
         if (parts.length > 0) {
