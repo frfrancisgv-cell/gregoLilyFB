@@ -358,40 +358,51 @@ export default function App() {
   // --- Load proper antiphon from GregoBase ---
   const applyChantData = async (data: any, proper: ProperEntry) => {
     let finalGabc = data.gabc || '';
-    if (data.mode) {
-      let annotation = data.mode;
-      if (data.modeVar && data.modeVar !== 'NULL' && data.modeVar !== '') {
-        annotation += ` ${data.modeVar}`;
-      }
-      if (finalGabc && !finalGabc.includes('annotation:')) {
-        if (finalGabc.includes('%%')) {
-           finalGabc = `annotation: ${annotation};\n` + finalGabc;
-        } else {
-           finalGabc = `annotation: ${annotation};\n%%\n` + finalGabc;
-        }
-      }
-    }
-    setAntiphonGabc(finalGabc);
-    setAntiphonGregobaseId(data.id || null);
-    setAntiphonMode(data.mode ? parseInt(data.mode, 10) : null);
-    setAntiphonModeVar((data.modeVar && data.modeVar !== 'NULL' && data.modeVar !== '') ? data.modeVar : null);
 
-    // Derive psalm tone from mode + variant (or fallback to first note)
+    // Derive psalm tone and variant (fallback to first note if missing)
     let tone = "1.D";
+    let variant = (data.modeVar && data.modeVar !== 'NULL' && data.modeVar !== '') ? data.modeVar : '';
     if (data.mode) {
-      if (data.modeVar && data.modeVar !== 'NULL' && data.modeVar !== '') {
-        const targetTone = `${data.mode}.${data.modeVar}`.toLowerCase();
+      if (variant) {
+        const targetTone = `${data.mode}.${variant}`.toLowerCase();
         const matchedTone = availableTones.find(t => t.toLowerCase() === targetTone);
         if (matchedTone) {
           tone = matchedTone;
+          if (matchedTone.includes('.')) {
+            variant = matchedTone.split('.')[1];
+          }
+        } else {
+          tone = `${data.mode}.${variant}`;
+        }
+      } else {
+        const firstNote = gabcFirstNoteName(finalGabc);
+        const derivedTone = modeToTone(data.mode, firstNote, availableTones);
+        tone = derivedTone;
+        if (derivedTone.includes('.')) {
+          variant = derivedTone.split('.')[1];
         }
       }
-      if (!tone || tone === "1.D") {
-        const firstNote = gabcFirstNoteName(finalGabc);
-        tone = modeToTone(data.mode, firstNote, availableTones);
-      }
       setPsalmTone(tone);
+
+      // Build the annotation (e.g. "8 G") and prepend it to GABC if not already present
+      let annotation = data.mode;
+      if (variant) {
+        annotation += ` ${variant}`;
+      }
+      const annotationHeader = `annotation: ${annotation};`;
+      if (finalGabc && !finalGabc.includes(annotationHeader)) {
+        if (finalGabc.includes('%%')) {
+          finalGabc = `${annotationHeader}\n` + finalGabc;
+        } else {
+          finalGabc = `${annotationHeader}\n%%\n` + finalGabc;
+        }
+      }
     }
+
+    setAntiphonGabc(finalGabc);
+    setAntiphonGregobaseId(data.id || null);
+    setAntiphonMode(data.mode ? parseInt(data.mode, 10) : null);
+    setAntiphonModeVar(variant || null);
 
     // Auto-load the appointed psalm
     const psalmKey = extractPsalmKey(proper.verses);
@@ -1421,7 +1432,7 @@ export default function App() {
                   <div className="border-b-2 border-amber-300 pb-4">
                     <h4 className="text-[10px] uppercase tracking-wider text-amber-700 mb-2 font-bold flex items-center gap-1.5">
                       <Music className="w-3 h-3" />
-                      Antiphon: {selectedProper?.incipit} {antiphonMode && `(Mode ${antiphonMode}${antiphonModeVar ? ' ' + antiphonModeVar : ''})`}
+                      Antiphon: {selectedProper?.incipit}
                     </h4>
                     <div className="overflow-x-auto">
                       <ExsurgePreview gabc={antiphonGabc} />

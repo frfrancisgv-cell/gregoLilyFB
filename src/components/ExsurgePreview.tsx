@@ -17,6 +17,15 @@ export function ExsurgePreview({ gabc }: { gabc: string }) {
       const ctxt = new exsurge.ChantContext();
       const mappings = exsurge.Gabc.createMappingsFromSource(ctxt, cleanedGabc);
       const score = new exsurge.ChantScore(ctxt, mappings, true);
+
+      // Parse annotation headers from GABC (handling multiple annotations if present)
+      const annotationMatches = [...gabc.matchAll(/^annotation:\s*([^;]+);/gm)];
+      if (annotationMatches.length > 0) {
+        const annotationText = annotationMatches.map(m => m[1].trim()).join('\n');
+        if (exsurge.Annotation) {
+          score.annotation = new exsurge.Annotation(ctxt, annotationText);
+        }
+      }
       
       score.performLayoutAsync(ctxt, () => {
         score.layoutChantLines(ctxt, containerRef.current!.clientWidth || 800, () => {
