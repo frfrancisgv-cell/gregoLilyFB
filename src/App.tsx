@@ -522,7 +522,7 @@ export default function App() {
 \\usepackage{lyluatex}
 \\usepackage[margin=1in]{geometry}
 
-\grechangestaffsize{${gregorioStaffSize}}
+\\grechangestaffsize{${gregorioStaffSize}}
 
 % Color the mediant star red
 \\let\\oldgreheightstar\\greheightstar
