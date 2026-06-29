@@ -619,6 +619,7 @@ export default function App() {
       // Verse alternation: determine which verses are chant vs. polyphony
       // Cycle: [chantVersesPerCycle chant verses] then [polyVersesPerCycle poly verses] repeating
       const cycleLen = chantVersesPerCycle + polyVersesPerCycle;
+      let hasAddedChantAnnotation = false;
 
       verses.forEach((verseText, index) => {
         const posInCycle = cycleLen > 0 ? index % cycleLen : 0;
@@ -640,7 +641,16 @@ export default function App() {
             medGabc = chantParts[0] || "";
             termGabc = chantParts[1] || medGabc;
 
-            gabcRaw = `(${clef}) `;
+            if (isChant && !hasAddedChantAnnotation) {
+                let toneAnnotation = psalmTone;
+                if (psalmTone.includes('.')) {
+                    toneAnnotation = psalmTone.replace('.', ' ');
+                }
+                gabcRaw = `annotation: ${toneAnnotation};\n%%\n(${clef}) `;
+                hasAddedChantAnnotation = true;
+            } else {
+                gabcRaw = `(${clef}) `;
+            }
 
             const parts = verseText.split('*');
             if (parts.length > 0) {
