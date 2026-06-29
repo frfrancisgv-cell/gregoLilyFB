@@ -811,7 +811,8 @@ export default function App() {
 
   const getDownloadFilename = (ext: string): string => {
     const cleanString = (str: string) => {
-      let s = str.replace(/&/g, 'and');
+      let s = str.replace(/Ordinary\s+Time/gi, 'OT');
+      s = s.replace(/&/g, 'and');
       s = s.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
       s = s.replace(/[^a-zA-Z0-9\s\-_]/g, '');
       s = s.trim().replace(/[\s\-_]+/g, '_');
