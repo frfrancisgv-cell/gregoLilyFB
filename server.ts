@@ -151,68 +151,77 @@ ${code}
     }
   });
 
+  // Mutex queue to prevent concurrent LuaLaTeX runs from conflicting and ensure cache reuse
+  let compileQueue = Promise.resolve();
+
   // API route for LuaLaTeX compilation
   app.post("/api/lualatex-preview", async (req, res) => {
-    try {
-      const { code } = req.body;
-      if (!code) {
-        return res.status(400).json({ error: "Missing LaTeX code." });
-      }
+    const { code } = req.body;
+    if (!code) {
+      return res.status(400).json({ error: "Missing LaTeX code." });
+    }
 
-      const tmpDir = os.tmpdir();
-      const uniqueId = `luatex-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-      
-      // We must extract \begin{gabccode}...\end{gabccode} and save to .gabc files
-      // to avoid bugs between gregoriotex snippet macros and lyluatex.
-      let gabcIndex = 0;
-      let finalCode = code;
-      const gabcRegex = /\\begin{gabccode}\s*([\s\S]*?)\s*\\end{gabccode}/g;
-      
-      let match;
-      const gabcFilesToCompile = [];
-      while ((match = gabcRegex.exec(code)) !== null) {
-        gabcIndex++;
-        const cleanGabc = match[1];
-        const gabcContent = `name: snippet-${gabcIndex};\n%%\n${cleanGabc}`;
-        const gabcBaseName = `${uniqueId}-${gabcIndex}`;
-        const gabcFileName = `${gabcBaseName}.gabc`;
-        const gabcPath = path.join(tmpDir, gabcFileName);
-        
-        await fs.promises.writeFile(gabcPath, gabcContent, "utf8");
-        gabcFilesToCompile.push(gabcFileName);
-        // Replace this block with \gregorioscore using the .gtex file (or no extension)
-        finalCode = finalCode.replace(match[0], `\\gregorioscore{${gabcBaseName}.gtex}`);
-      }
-
-      const texFileName = `${uniqueId}.tex`;
-      const texPath = path.join(tmpDir, texFileName);
-      await fs.promises.writeFile(texPath, finalCode, "utf8");
-
+    compileQueue = compileQueue.then(async () => {
+      const buildDir = "/tmp/gregolily-build";
+      const pdfPath = path.join(buildDir, "document.pdf");
       try {
-        // Compile GABC files first
-        for (const gabcFile of gabcFilesToCompile) {
-          await execAsync(`gregorio ${gabcFile}`, { cwd: tmpDir });
+        await fs.promises.mkdir(buildDir, { recursive: true });
+
+        // Delete any existing PDF to prevent returning stale files from previous failed runs
+        if (fs.existsSync(pdfPath)) {
+          fs.unlinkSync(pdfPath);
         }
 
-        // Run lualatex with shell-escape using relative path in its cwd
+        // Extract \begin{gabccode}...\end{gabccode} and save to stable .gabc files
+        let gabcIndex = 0;
+        let finalCode = code;
+        const gabcRegex = /\\begin{gabccode}\s*([\s\S]*?)\s*\\end{gabccode}/g;
+        
+        let match;
+        const gabcFilesToCompile = [];
+        while ((match = gabcRegex.exec(code)) !== null) {
+          gabcIndex++;
+          const cleanGabc = match[1];
+          // Prepend snippet name header correctly
+          let gabcContent = "";
+          if (cleanGabc.includes('%%')) {
+            gabcContent = `name: snippet-${gabcIndex};\n${cleanGabc}`;
+          } else {
+            gabcContent = `name: snippet-${gabcIndex};\n%%\n${cleanGabc}`;
+          }
+          const gabcBaseName = `snippet-${gabcIndex}`;
+          const gabcFileName = `${gabcBaseName}.gabc`;
+          const gabcPath = path.join(buildDir, gabcFileName);
+          
+          await fs.promises.writeFile(gabcPath, gabcContent, "utf8");
+          gabcFilesToCompile.push(gabcFileName);
+          // Replace this block with \gregorioscore using the stable .gtex file (or no extension)
+          finalCode = finalCode.replace(match[0], `\\gregorioscore{${gabcBaseName}.gtex}`);
+        }
+
+        const texFileName = "document.tex";
+        const texPath = path.join(buildDir, texFileName);
+        await fs.promises.writeFile(texPath, finalCode, "utf8");
+
+        // Compile GABC files first
+        for (const gabcFile of gabcFilesToCompile) {
+          await execAsync(`gregorio ${gabcFile}`, { cwd: buildDir });
+        }
+
+        // Run lualatex with shell-escape using relative path in stable build cwd
         try {
-          await execAsync(`lualatex --shell-escape -interaction=nonstopmode ${texFileName}`, { cwd: tmpDir });
+          await execAsync(`lualatex --shell-escape -interaction=nonstopmode ${texFileName}`, { cwd: buildDir });
         } catch (lualatexError: any) {
-          // LuaLaTeX often returns a non-zero exit code due to warnings (like GregorioTeX "Rerun to fix")
+          // LuaLaTeX often returns a non-zero exit code due to warnings
           // If the PDF exists, we can ignore the error.
-          const pdfPathCheck = path.join(tmpDir, `${uniqueId}.pdf`);
-          if (!fs.existsSync(pdfPathCheck)) {
+          if (!fs.existsSync(pdfPath)) {
             throw lualatexError;
           }
         }
         
-        const pdfPath = path.join(tmpDir, `${uniqueId}.pdf`);
-        
         if (fs.existsSync(pdfPath)) {
           const pdfContent = await fs.promises.readFile(pdfPath);
-          // Return the PDF as base64 so the client can display it in an iframe
           res.json({ pdfBase64: pdfContent.toString("base64") });
-          fs.unlinkSync(pdfPath);
         } else {
           throw new Error("PDF file not generated.");
         }
@@ -220,21 +229,18 @@ ${code}
         console.error("LaTeX Compilation Error:");
         console.error(error.stdout || error.message);
         console.error(error.stderr);
-        throw new Error(`Failed to compile LaTeX. Command failed: ${error.message}\nSTDOUT:\n${error.stdout}\nSTDERR:\n${error.stderr}`);
-      } finally {
-        if (fs.existsSync(texPath)) fs.unlinkSync(texPath);
-        // Also clean up .aux and .log files
-        const auxPath = path.join(tmpDir, `${uniqueId}.aux`);
-        const logPath = path.join(tmpDir, `${uniqueId}.log`);
-        const gauxPath = path.join(tmpDir, `${uniqueId}.gaux`);
-        if (fs.existsSync(auxPath)) fs.unlinkSync(auxPath);
-        if (fs.existsSync(logPath)) fs.unlinkSync(logPath);
-        if (fs.existsSync(gauxPath)) fs.unlinkSync(gauxPath);
+        if (!res.headersSent) {
+          res.status(500).json({ 
+            error: `Failed to compile LaTeX. Command failed: ${error.message}\nSTDOUT:\n${error.stdout}\nSTDERR:\n${error.stderr}` 
+          });
+        }
       }
-    } catch (err: any) {
-      console.error(err);
-      res.status(500).json({ error: err.message || "Internal server error." });
-    }
+    }).catch(err => {
+      console.error("Queue execution error:", err);
+      if (!res.headersSent) {
+        res.status(500).json({ error: err.message || "Internal server error." });
+      }
+    });
   });
 
   // GregoBase chant lookup endpoint
